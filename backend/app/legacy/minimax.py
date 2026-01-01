@@ -193,8 +193,8 @@ def actions(s,players,trumpReveal,trumpSuit,currentSuit,chose,finalBid,playerTru
     if  (chance(s)-1)==0:
         # Trump Call Player
         if players[playerChance]['isTrump']:
-                        if len(players[playerChance]['cards'])==0 and trumpReveal and playerTrump is not None:
-                              players[playerChance]['cards'].append(playerTrump)
+                        # if len(players[playerChance]['cards'])==0 and trumpReveal and playerTrump is not None:
+                        #       players[playerChance]['cards'].append(playerTrump)
                         #If trump is already revealed or the player has all trumps, all cards are valid
                         if trumpReveal or allTrump(players[playerChance]['cards'],trumpSuit):
                             return (players[playerChance]['cards'])
@@ -244,7 +244,7 @@ def actions(s,players,trumpReveal,trumpSuit,currentSuit,chose,finalBid,playerTru
                                         # playerTrump = None
                                         # trumpPlayed = True
                                         # trumpIndice[len(s)] = 1
-                                        players[finalBid-1]['cards'].append(playerTrump)
+                                        # players[finalBid-1]['cards'].append(playerTrump)
                                         return [playerTrump]
                                         #  self.currentCatch.append(self.playerTrump)
 
@@ -319,6 +319,8 @@ def result(s,a,currentSuit,trumpReveal,chose,playerTrump,trumpPlayed,trumpIndice
         
         # Store the index where the card was before removing it
         for idx, card in enumerate(players[player_idx]['cards']):
+            card.identity()
+            a.identity()
             if card.identity() == a.identity():
                 undo_info['card_removed_index'] = idx
                 break
@@ -352,8 +354,9 @@ def result(s,a,currentSuit,trumpReveal,chose,playerTrump,trumpPlayed,trumpIndice
             undo_info['trump_added_to_player'] = finalBid-1
             playerTrump = None
         elif a:
+             players[finalBid-1]['cards'].append(playerTrump)
              undo_info['trump_added_to_player'] = finalBid-1
-            
+
         chose = True
         trumpReveal = a
         return currentSuit,s,trumpReveal,chose,playerTrump,trumpPlayed,trumpIndice,players,trumpSuit,finalBid,undo_info
