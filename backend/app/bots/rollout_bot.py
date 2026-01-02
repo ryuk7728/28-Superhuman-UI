@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import traceback
+from pathlib import Path
 import asyncio
 import os
 import time
@@ -31,6 +34,46 @@ def _seed_entropy() -> int:
         ^ time.time_ns()
     )
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    val = os.getenv(name)
+    if val is None:
+        return default
+    return val.strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _dump_dir_backend_root() -> Path:
+    # rollout_bot.py is: backend/app/bots/rollout_bot.py
+    # parents: bots -> app -> backend
+    backend_root = Path(__file__).resolve().parents[2]
+    dump_dir = backend_root / "rollout_crash_dumps"
+    dump_dir.mkdir(parents=True, exist_ok=True)
+    return dump_dir
+
+
+def _safe_card_id(x):
+    try:
+        if x is None:
+            return None
+        return to_card_id(x)
+    except Exception:
+        return None
+
+
+def _players_to_cardids(players):
+    out = []
+    for i in range(4):
+        out.append([_safe_card_id(c) for c in players[i]["cards"]])
+    return out
+
+
+def _find_none_positions(players):
+    pos = []
+    for i in range(4):
+        idxs = [j for j, c in enumerate(players[i]["cards"]) if c is None]
+        if idxs:
+            pos.append({"seat": i, "indices": idxs})
+    return pos
 
 def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int]:
     """
@@ -69,7 +112,7 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
 
     # If bot is bidder and concealed trump exists, include it as known
     concealed_trump_card_id = snapshot.get("concealedTrumpCardId")
-    if concealed_trump_card_id and bot_seat == bidder_seat:
+    if concealed_trump_card_id and (bot_seat == bidder_seat or trumpReveal):
         base_known.add(concealed_trump_card_id)
 
     # If trump is already revealed, suit is known for all
@@ -85,18 +128,39 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
         sim_player_trump = None
         sim_trump_suit = None
 
+        # If trump is revealed, the suit is known.
+        # BUT legacy logic may still need playerTrump to be non-None when chose=True,
+        # especially for bidder branches. So if snapshot has concealedTrumpCardId,
+        # keep it available (public once revealed anyway).
         if trumpReveal:
             sim_trump_suit = known_trump_suit
+
+            if concealed_trump_card_id is not None:
+                # Prefer using the same object instance if it exists in bidder's hand
+                # (important because legacy uses `a == playerTrump` to consume it).
+                found = None
+                # We haven't built `players` yet, but we do have bot_hand which may contain it.
+                for c in bot_hand:
+                    if to_card_id(c) == concealed_trump_card_id:
+                        found = c
+                        break
+                sim_player_trump = found if found is not None else from_card_id(concealed_trump_card_id)
+
         else:
             if bot_seat == bidder_seat:
                 # bidder knows true concealed trump
-                if not concealed_trump_card_id:
-                    # should not happen if state is consistent
+                if concealed_trump_card_id is not None:
+                    # same-instance preference if present
+                    found = None
+                    for c in bot_hand:
+                        if to_card_id(c) == concealed_trump_card_id:
+                            found = c
+                            break
+                    sim_player_trump = found if found is not None else from_card_id(concealed_trump_card_id)
+                    sim_trump_suit = sim_player_trump.suit
+                else:
                     sim_player_trump = None
                     sim_trump_suit = None
-                else:
-                    sim_player_trump = from_card_id(concealed_trump_card_id)
-                    sim_trump_suit = sim_player_trump.suit
             else:
                 # non-bidder: trump unknown -> sample from pool
                 idx = rng.randrange(len(pool_ids))
@@ -134,27 +198,161 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
 
         reward_distribution: list[tuple[object, float]] = []
 
-        legacy_minimax.minimax_extended(
-            s_cards[:],
-            True,
-            True,
-            trumpPlayed,
-            s_cards[:],
-            trumpIndice[:],
-            leaderIndex,
-            players,
+        dump_enabled = _env_bool("APP_DUMP_ROLLOUT_CRASHES", False)
+        call_log_max = int(os.getenv("APP_RESULT_CALL_LOG_SIZE", "80"))
+        result_call_log = []
+
+        orig_result = legacy_minimax.result
+
+        def traced_result(
+            s,
+            a,
             currentSuit,
             trumpReveal,
-            sim_trump_suit,
             chose,
+            playerTrump,
+            trumpPlayed,
+            trumpIndice,
+            players,
+            trumpSuit,
             finalBid,
-            sim_player_trump,
-            -1,
-            reward_distribution,
-            0,
-            0,
-            k,
-        )
+            playerChance,
+        ):
+            # Detect corruption BEFORE legacy.result crashes
+            none_pos = _find_none_positions(players)
+            if none_pos:
+                raise RuntimeError(f"None already present in players hands: {none_pos}")
+
+            actor = (playerChance + len(s)) % 4
+
+            entry = {
+                "actor": actor,
+                "leaderIndex_playerChance": playerChance,
+                "sLenBefore": len(s),
+                "currentSuit": currentSuit,
+                "trumpReveal": trumpReveal,
+                "chose": chose,
+                "finalBid": finalBid,
+                "playerTrumpCardId": _safe_card_id(playerTrump),
+                "action": (
+                    {"type": "bool", "value": a}
+                    if isinstance(a, bool)
+                    else {"type": "card", "cardId": _safe_card_id(a), "isNone": a is None}
+                ),
+                "playersHandSizes": [len(players[i]["cards"]) for i in range(4)],
+            }
+            result_call_log.append(entry)
+            if len(result_call_log) > call_log_max:
+                result_call_log.pop(0)
+
+            out = orig_result(
+                s,
+                a,
+                currentSuit,
+                trumpReveal,
+                chose,
+                playerTrump,
+                trumpPlayed,
+                trumpIndice,
+                players,
+                trumpSuit,
+                finalBid,
+                playerChance,
+            )
+
+            # Detect corruption AFTER result() too
+            (
+                _cs2,
+                _s2,
+                _tr2,
+                _ch2,
+                _pt2,
+                _tp2,
+                _ti2,
+                players2,
+                _ts2,
+                _fb2,
+                _undo,
+            ) = out
+
+            none_pos2 = _find_none_positions(players2)
+            if none_pos2:
+                raise RuntimeError(f"None introduced into players hands: {none_pos2}")
+
+            return out
+
+        if dump_enabled:
+            legacy_minimax.result = traced_result
+
+        try:
+            legacy_minimax.minimax_extended(
+                s_cards[:],
+                True,
+                True,
+                trumpPlayed,
+                s_cards[:],
+                trumpIndice[:],
+                leaderIndex,
+                players,
+                currentSuit,
+                trumpReveal,
+                sim_trump_suit,
+                chose,
+                finalBid,
+                sim_player_trump,
+                -1,
+                reward_distribution,
+                0,
+                0,
+                k,
+            )
+        except Exception as e:
+            if dump_enabled:
+                dump = {
+                    "kind": "rollout_crash_dump",
+                    "pid": os.getpid(),
+                    "seed": seed,
+                    "n": n,
+                    "exception": {
+                        "type": type(e).__name__,
+                        "message": str(e),
+                        "traceback": traceback.format_exc(),
+                    },
+                    "snapshot": snapshot,
+                    "simulated": {
+                        "simPlayerTrumpCardId": _safe_card_id(sim_player_trump),
+                        "simTrumpSuit": sim_trump_suit,
+                        "sCardIds": [_safe_card_id(c) for c in s_cards],
+                        "playersCardsCardIds": _players_to_cardids(players),
+                    },
+                    "minimaxCall": {
+                        "sCardIds": [_safe_card_id(c) for c in s_cards],
+                        "first": True,
+                        "secondary": True,
+                        "trumpPlayed": trumpPlayed,
+                        "trumpIndice": list(trumpIndice),
+                        "leaderIndex_playerChance": leaderIndex,
+                        "currentSuit": currentSuit,
+                        "trumpReveal": trumpReveal,
+                        "trumpSuit": sim_trump_suit,
+                        "chose": chose,
+                        "finalBid": finalBid,
+                        "playerTrumpCardId": _safe_card_id(sim_player_trump),
+                        "k": k,
+                    },
+                    "resultCallLogTail": result_call_log,
+                }
+
+                fn = f"crash_{int(time.time()*1000)}_pid{os.getpid()}_seed{seed}.json"
+                path = _dump_dir_backend_root() / fn
+                path.write_text(json.dumps(dump, indent=2), encoding="utf-8")
+
+                # Raise an error that includes the path so the parent can log it
+                raise RuntimeError(f"ROLL_OUT_CRASH_DUMP={str(path)}") from e
+
+            raise
+        finally:
+            legacy_minimax.result = orig_result
 
         for a, _v in reward_distribution:
             counts[a] += 1
@@ -179,10 +377,15 @@ def _build_snapshot(state, bot_seat: int) -> dict[str, Any]:
 
     bot_hand_ids = [to_card_id(c) for c in state.play_players[bot_seat]["cards"]]
 
-    concealed_id = None
     bidder_seat = state.finalBid - 1
-    if bot_seat == bidder_seat and state.player_trump is not None:
-        concealed_id = to_card_id(state.player_trump)
+
+    # IMPORTANT:
+    # - bidder always knows the indicator card if it exists
+    # - once trumpReveal is True, indicator identity is public, so include it for everyone
+    concealed_id = None
+    if state.player_trump is not None:
+        if bot_seat == bidder_seat or state.trumpReveal:
+            concealed_id = to_card_id(state.player_trump)
 
     snap: dict[str, Any] = {
         "botSeat": bot_seat,
@@ -243,7 +446,25 @@ async def choose_action_with_rollouts_parallel(
         fut = pool.submit(rollout_worker, snapshot, n, seed)
         tasks.append(asyncio.wrap_future(fut, loop=loop))
 
-    results = await asyncio.gather(*tasks)
+    try:
+        results = await asyncio.gather(*tasks)
+    except Exception as e:
+        # If worker wrote a dump, surface it in logs and fall back safely.
+        msg = str(e)
+        if "ROLL_OUT_CRASH_DUMP=" in msg:
+            dump_path = msg.split("ROLL_OUT_CRASH_DUMP=", 1)[1].strip()
+            try:
+                state.event_log.append(f"BOT CRASH DUMP: {dump_path}")
+            except Exception:
+                pass
+            print("BOT CRASH DUMP:", dump_path)
+        else:
+            print("Bot rollout crashed:", repr(e))
+
+        # Fallback: choose first legal action so the server doesn't die
+        if legal.type == "REVEAL_CHOICE":
+            return ("REVEAL", {"seatIndex": bot_seat, "reveal": False})
+        return ("PLAY", {"seatIndex": bot_seat, "cardId": legal.cardIds[0]})
 
     merged: Counter = Counter()
     for d in results:

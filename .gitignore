@@ -4,3 +4,4 @@ backend/.env
 frontend/.env
 __pycache__/
 *.pyc
+backend/rollout_crash_dumps

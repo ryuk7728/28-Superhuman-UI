@@ -14,6 +14,6 @@ def compute_k(catch_number: int) -> int:
         return settings.k_override
 
     if catch_number <= 4:
-        return 2
+        return 3
 
     return max(1, 9 - catch_number)
