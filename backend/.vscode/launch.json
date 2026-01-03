@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug legacy reveal bug (GUI)",
+      "type": "python",
+      "request": "launch",
+      "module": "app.scripts.debug_bidder",
+      "cwd": "${workspaceFolder}",
+      "justMyCode": false,
+      "console": "integratedTerminal",
+      "env": {
+        "PYTHONBREAKPOINT": "0",
+        "PYTHONPATH": "${workspaceFolder}"
+      }
+    }
+  ]
+}

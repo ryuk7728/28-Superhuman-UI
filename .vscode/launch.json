@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug: legacy repro script (module from backend)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "app.scripts.debug_bidder",
+      "cwd": "${workspaceFolder}/backend",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/backend",
+        "PYTHONBREAKPOINT": "0"
+      }
+    },
+    {
+      "name": "Debug: current file (treat backend as root)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "cwd": "${workspaceFolder}/backend",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/backend",
+        "PYTHONBREAKPOINT": "0"
+      }
+    }
+  ]
+}
