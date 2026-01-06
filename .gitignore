@@ -1,7 +1,8 @@
-backend/venv/
+backend/venv
 frontend/node_modules/
 backend/.env
 frontend/.env
 __pycache__/
 *.pyc
 backend/rollout_crash_dumps
+meta/
