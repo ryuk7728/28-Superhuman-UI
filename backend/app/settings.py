@@ -36,6 +36,10 @@ class Settings:
     # Rollout bot config
     rollouts: int = _get_int("APP_ROLLOUTS", 200)
     workers: int = _get_int("APP_WORKERS", 8)
+
+    # NEW: retries for constraint-aware rollout dealing
+    rollout_deal_retries: int = _get_int("APP_ROLLOUT_DEAL_RETRIES", 30)
+
     max_concurrent_bot_thinking: int = _get_int(
         "APP_MAX_CONCURRENT_BOT_THINKING", 1
     )

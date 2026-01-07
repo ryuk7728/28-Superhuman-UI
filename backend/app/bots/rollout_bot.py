@@ -13,6 +13,7 @@ from typing import Any
 
 from app.engine.cards_adapter import from_card_id, to_card_id
 from app.engine.k_policy import compute_k
+from app.engine.state import SUIT_MATRIX_INDEX
 from app.settings import settings
 from app.legacy.cards import Cards
 from app.legacy import minimax as legacy_minimax
@@ -22,17 +23,14 @@ from app.legacy import minimax as legacy_minimax
 # Worker-side helpers (picklable)
 # -----------------------------
 
+
 def _full_deck_card_ids() -> list[str]:
     return [to_card_id(c) for c in Cards.packOf28()]
 
 
 def _seed_entropy() -> int:
     # Non-deterministic seed with high diversity across workers
-    return (
-        int.from_bytes(os.urandom(8), "little")
-        ^ os.getpid()
-        ^ time.time_ns()
-    )
+    return int.from_bytes(os.urandom(8), "little") ^ os.getpid() ^ time.time_ns()
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -75,6 +73,84 @@ def _find_none_positions(players):
             pos.append({"seat": i, "indices": idxs})
     return pos
 
+
+def _card_suit_from_id(card_id: str) -> str:
+    # cardId is "Hearts_Jack" => suit is "Hearts"
+    return card_id.split("_", 1)[0]
+
+
+def _deal_unknown_with_suit_constraints(
+    *,
+    rng: random.Random,
+    pool_ids: list[str],
+    seats_to_fill: list[int],
+    hand_sizes: list[int],
+    suit_matrix: list[list[int]],
+) -> dict[int, list[str]] | None:
+    """
+    Greedy constrained deal:
+      - repeatedly pick most constrained seat (smallest allowed pool)
+      - randomly sample 'need' cards from allowed
+      - remove chosen from pool
+    Returns seat->cardIds, or None if this attempt can't satisfy constraints.
+    """
+    remaining_pool = pool_ids[:]
+    remaining_seats = seats_to_fill[:]
+    dealt: dict[int, list[str]] = {s: [] for s in seats_to_fill}
+
+    def is_allowed(cid: str, seat: int) -> bool:
+        suit = _card_suit_from_id(cid)
+        row = SUIT_MATRIX_INDEX.get(suit)
+        if row is None:
+            return True
+        try:
+            return suit_matrix[row][seat] == 1
+        except Exception:
+            # If matrix malformed, don't block
+            return True
+
+    def void_count(seat: int) -> int:
+        cnt = 0
+        for row in range(min(4, len(suit_matrix))):
+            try:
+                if suit_matrix[row][seat] == 0:
+                    cnt += 1
+            except Exception:
+                continue
+        return cnt
+
+    while remaining_seats:
+        seat_infos: list[tuple[int, int, int, int, list[str]]] = []
+        for seat in remaining_seats:
+            need = hand_sizes[seat]
+            allowed = [cid for cid in remaining_pool if is_allowed(cid, seat)]
+            seat_infos.append(
+                (
+                    len(allowed),  # primary: smallest allowed pool first
+                    -void_count(seat),  # tie: more void suits first
+                    -need,  # tie: higher need first
+                    seat,  # stable tie-breaker
+                    allowed,
+                )
+            )
+
+        seat_infos.sort(key=lambda x: (x[0], x[1], x[2], x[3]))
+        allowed_len, _neg_voids, _neg_need, seat, allowed = seat_infos[0]
+        need = hand_sizes[seat]
+
+        if allowed_len < need:
+            return None
+
+        chosen = rng.sample(allowed, need) if need > 0 else []
+        dealt[seat] = chosen
+
+        chosen_set = set(chosen)
+        remaining_pool = [cid for cid in remaining_pool if cid not in chosen_set]
+        remaining_seats = [s for s in remaining_seats if s != seat]
+
+    return dealt
+
+
 def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int]:
     """
     Runs n rollouts and returns a Counter-like dict mapping:
@@ -107,6 +183,10 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
     played_set = set(snapshot["playedCardIds"])
     deck_ids = _full_deck_card_ids()
 
+    # Suit constraints matrix (rows: H, D, S, C; cols: seat 0..3)
+    suit_matrix = snapshot.get("suitMatrix") or [[1, 1, 1, 1] for _ in range(4)]
+    max_deal_retries = max(0, int(settings.rollout_deal_retries))
+
     # Base known set for this bot (own hand + played)
     base_known = set(snapshot["botHandCardIds"]) | played_set
 
@@ -129,34 +209,36 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
         sim_trump_suit = None
 
         # If trump is revealed, the suit is known.
-        # BUT legacy logic may still need playerTrump to be non-None when chose=True,
-        # especially for bidder branches. So if snapshot has concealedTrumpCardId,
-        # keep it available (public once revealed anyway).
+        # BUT legacy logic may still need playerTrump to be non-None when chose=True.
         if trumpReveal:
             sim_trump_suit = known_trump_suit
 
             if concealed_trump_card_id is not None:
-                # Prefer using the same object instance if it exists in bidder's hand
-                # (important because legacy uses `a == playerTrump` to consume it).
                 found = None
-                # We haven't built `players` yet, but we do have bot_hand which may contain it.
                 for c in bot_hand:
                     if to_card_id(c) == concealed_trump_card_id:
                         found = c
                         break
-                sim_player_trump = found if found is not None else from_card_id(concealed_trump_card_id)
+                sim_player_trump = (
+                    found
+                    if found is not None
+                    else from_card_id(concealed_trump_card_id)
+                )
 
         else:
             if bot_seat == bidder_seat:
                 # bidder knows true concealed trump
                 if concealed_trump_card_id is not None:
-                    # same-instance preference if present
                     found = None
                     for c in bot_hand:
                         if to_card_id(c) == concealed_trump_card_id:
                             found = c
                             break
-                    sim_player_trump = found if found is not None else from_card_id(concealed_trump_card_id)
+                    sim_player_trump = (
+                        found
+                        if found is not None
+                        else from_card_id(concealed_trump_card_id)
+                    )
                     sim_trump_suit = sim_player_trump.suit
                 else:
                     sim_player_trump = None
@@ -175,14 +257,35 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
         hands: list[list] = [[], [], [], []]
         hands[bot_seat] = bot_hand[:]  # keep bot's real hand
 
-        pool_idx = 0
-        for seat in range(4):
-            if seat == bot_seat:
-                continue
-            need = hand_sizes[seat]
-            slice_ids = pool_ids[pool_idx : pool_idx + need]
-            pool_idx += need
-            hands[seat] = [from_card_id(cid) for cid in slice_ids]
+        seats_to_fill = [s for s in range(4) if s != bot_seat]
+
+        dealt_map: dict[int, list[str]] | None = None
+        if max_deal_retries > 0:
+            for _attempt in range(max_deal_retries):
+                rng.shuffle(pool_ids)
+                dealt_map = _deal_unknown_with_suit_constraints(
+                    rng=rng,
+                    pool_ids=pool_ids,
+                    seats_to_fill=seats_to_fill,
+                    hand_sizes=hand_sizes,
+                    suit_matrix=suit_matrix,
+                )
+                if dealt_map is not None:
+                    break
+
+        if dealt_map is not None:
+            for seat in seats_to_fill:
+                hands[seat] = [from_card_id(cid) for cid in dealt_map[seat]]
+        else:
+            # Fallback: unconstrained slice dealing
+            pool_idx = 0
+            for seat in range(4):
+                if seat == bot_seat:
+                    continue
+                need = hand_sizes[seat]
+                slice_ids = pool_ids[pool_idx : pool_idx + need]
+                pool_idx += need
+                hands[seat] = [from_card_id(cid) for cid in slice_ids]
 
         # Build legacy players structure
         players = []
@@ -218,7 +321,6 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
             finalBid,
             playerChance,
         ):
-            # Detect corruption BEFORE legacy.result crashes
             none_pos = _find_none_positions(players)
             if none_pos:
                 raise RuntimeError(f"None already present in players hands: {none_pos}")
@@ -237,7 +339,11 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
                 "action": (
                     {"type": "bool", "value": a}
                     if isinstance(a, bool)
-                    else {"type": "card", "cardId": _safe_card_id(a), "isNone": a is None}
+                    else {
+                        "type": "card",
+                        "cardId": _safe_card_id(a),
+                        "isNone": a is None,
+                    }
                 ),
                 "playersHandSizes": [len(players[i]["cards"]) for i in range(4)],
             }
@@ -260,7 +366,6 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
                 playerChance,
             )
 
-            # Detect corruption AFTER result() too
             (
                 _cs2,
                 _s2,
@@ -343,11 +448,12 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
                     "resultCallLogTail": result_call_log,
                 }
 
-                fn = f"crash_{int(time.time()*1000)}_pid{os.getpid()}_seed{seed}.json"
+                fn = (
+                    f"crash_{int(time.time()*1000)}_pid{os.getpid()}_seed{seed}.json"
+                )
                 path = _dump_dir_backend_root() / fn
                 path.write_text(json.dumps(dump, indent=2), encoding="utf-8")
 
-                # Raise an error that includes the path so the parent can log it
                 raise RuntimeError(f"ROLL_OUT_CRASH_DUMP={str(path)}") from e
 
             raise
@@ -364,6 +470,7 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
 # Main-process async chooser
 # -----------------------------
 
+
 def _build_snapshot(state, bot_seat: int) -> dict[str, Any]:
     # played cards include completed catches + current trick
     played_cards = []
@@ -374,14 +481,10 @@ def _build_snapshot(state, bot_seat: int) -> dict[str, Any]:
     played_cards.extend(state.s)
 
     played_ids = [to_card_id(c) for c in played_cards]
-
     bot_hand_ids = [to_card_id(c) for c in state.play_players[bot_seat]["cards"]]
 
     bidder_seat = state.finalBid - 1
 
-    # IMPORTANT:
-    # - bidder always knows the indicator card if it exists
-    # - once trumpReveal is True, indicator identity is public, so include it for everyone
     concealed_id = None
     if state.player_trump is not None:
         if bot_seat == bidder_seat or state.trumpReveal:
@@ -405,6 +508,8 @@ def _build_snapshot(state, bot_seat: int) -> dict[str, Any]:
         "handSizes": [len(state.play_players[i]["cards"]) for i in range(4)],
         "playedCardIds": played_ids,
         "concealedTrumpCardId": concealed_id,
+        # NEW: suit knowledge matrix for constraint-aware dealing
+        "suitMatrix": state.suit_matrix,
     }
 
     return snap
@@ -449,7 +554,6 @@ async def choose_action_with_rollouts_parallel(
     try:
         results = await asyncio.gather(*tasks)
     except Exception as e:
-        # If worker wrote a dump, surface it in logs and fall back safely.
         msg = str(e)
         if "ROLL_OUT_CRASH_DUMP=" in msg:
             dump_path = msg.split("ROLL_OUT_CRASH_DUMP=", 1)[1].strip()
@@ -461,7 +565,6 @@ async def choose_action_with_rollouts_parallel(
         else:
             print("Bot rollout crashed:", repr(e))
 
-        # Fallback: choose first legal action so the server doesn't die
         if legal.type == "REVEAL_CHOICE":
             return ("REVEAL", {"seatIndex": bot_seat, "reveal": False})
         return ("PLAY", {"seatIndex": bot_seat, "cardId": legal.cardIds[0]})
@@ -471,7 +574,6 @@ async def choose_action_with_rollouts_parallel(
         merged.update(d)
 
     if not merged:
-        # fallback
         if legal.type == "REVEAL_CHOICE":
             return ("REVEAL", {"seatIndex": bot_seat, "reveal": False})
         return ("PLAY", {"seatIndex": bot_seat, "cardId": legal.cardIds[0]})
@@ -485,7 +587,6 @@ async def choose_action_with_rollouts_parallel(
     # string => card identity
     if isinstance(best_action, str):
         if legal.type != "PLAY_CARD" or not legal.cardIds:
-            # if server expects reveal choice but rollouts suggested card, fallback
             return ("REVEAL", {"seatIndex": bot_seat, "reveal": False})
 
         for cid in legal.cardIds:
@@ -494,7 +595,6 @@ async def choose_action_with_rollouts_parallel(
 
         return ("PLAY", {"seatIndex": bot_seat, "cardId": legal.cardIds[0]})
 
-    # Unknown type fallback
     if legal.type == "REVEAL_CHOICE":
         return ("REVEAL", {"seatIndex": bot_seat, "reveal": False})
     return ("PLAY", {"seatIndex": bot_seat, "cardId": legal.cardIds[0]})

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Any
+from typing import Literal, Any, Final
 
 from app.legacy.cards import Cards
 
@@ -15,6 +15,24 @@ Phase = Literal[
     "PLAY",
     "GAME_OVER",
 ]
+
+# Suit knowledge matrix order (rows):
+# Hearts, Diamonds, Spades, Clubs
+SUIT_MATRIX_SUITS: Final[tuple[str, ...]] = (
+    "Hearts",
+    "Diamonds",
+    "Spades",
+    "Clubs",
+)
+
+SUIT_MATRIX_INDEX: Final[dict[str, int]] = {
+    s: i for i, s in enumerate(SUIT_MATRIX_SUITS)
+}
+
+
+def _default_suit_matrix() -> list[list[int]]:
+    # 4 suits x 4 seats, all initially possible
+    return [[1, 1, 1, 1] for _ in range(4)]
 
 
 @dataclass
@@ -52,8 +70,14 @@ class GameState:
     # Concealed trump indicator card (removed from bidder hand)
     player_trump: Cards | None = None
 
+    # NEW: Suit void knowledge (persistent during PLAY; void stays void)
+    # Rows: Hearts, Diamonds, Spades, Clubs; Cols: seat 0..3
+    suit_matrix: list[list[int]] = field(default_factory=_default_suit_matrix)
+
     # --- PLAY STATE (initialized when entering PLAY) ---
-    seat_types: list[str] = field(default_factory=lambda: ["bot", "human", "bot", "human"])
+    seat_types: list[str] = field(
+        default_factory=lambda: ["bot", "human", "bot", "human"]
+    )
 
     # legacy expects:
     finalBid: int = 0  # 1-indexed bidder seat
@@ -100,6 +124,13 @@ class GameState:
 
         trump_suit_visible = self.trumpSuit if self.trumpReveal else None
 
+        suit_knowledge = {
+            "Hearts": self.suit_matrix[0],
+            "Diamonds": self.suit_matrix[1],
+            "Spades": self.suit_matrix[2],
+            "Clubs": self.suit_matrix[3],
+        }
+
         return {
             "gameId": self.game_id,
             "phase": self.phase,
@@ -125,6 +156,9 @@ class GameState:
             "finalBidderSeat": self.final_bidder_seat,
             "finalBidValue": self.final_bid_value,
             "hasConcealedTrump": self.player_trump is not None,
+            # Debug-friendly exposure of suit knowledge
+            "suitKnowledge": suit_knowledge,
+            "suitMatrix": self.suit_matrix,
             "play": {
                 "leaderIndex": self.leaderIndex,
                 "catchNumber": self.catchNumber,

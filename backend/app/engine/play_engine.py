@@ -4,6 +4,7 @@ import copy
 from dataclasses import dataclass
 
 from app.engine.cards_adapter import from_card_id, to_card_id
+from app.engine.state import SUIT_MATRIX_INDEX
 from app.legacy.cards import Cards
 from app.legacy import minimax as legacy_minimax
 
@@ -18,6 +19,35 @@ class PlayLegalActions:
 
 def current_actor_index(leader_index: int, s_len: int) -> int:
     return (leader_index + s_len) % 4
+
+
+def _infer_void_if_failed_follow(
+    state,
+    *,
+    seat_index: int,
+    pre_trick_len: int,
+    led_suit: str,
+    played_suit: str,
+) -> None:
+    """
+    Permanent inference:
+    If a non-leader fails to follow the led suit, then that seat is void in that
+    suit for the rest of the game (hand only shrinks).
+    """
+    if pre_trick_len <= 0:
+        return
+    if not led_suit:
+        return
+    if played_suit == led_suit:
+        return
+
+    row = SUIT_MATRIX_INDEX.get(led_suit)
+    if row is None:
+        return
+
+    if state.suit_matrix[row][seat_index] != 0:
+        state.suit_matrix[row][seat_index] = 0
+        state.event_log.append(f"Inferred: P{seat_index+1} is void in {led_suit}.")
 
 
 def init_play_state(state) -> None:
@@ -47,6 +77,9 @@ def init_play_state(state) -> None:
     state.leaderIndex = state.starting_bidder_index
 
     state.trumpSuit = state.player_trump.suit if state.player_trump else None
+
+    # Reset suit knowledge at start of PLAY
+    state.suit_matrix = [[1, 1, 1, 1] for _ in range(4)]
 
     state.play_players = []
     for i in range(4):
@@ -122,6 +155,7 @@ def compute_play_legal_actions(state) -> PlayLegalActions:
             if c.identity() == ident:
                 found = c
                 break
+
         if found is None and state.player_trump is not None:
             if state.player_trump.identity() == ident:
                 found = state.player_trump
@@ -178,7 +212,10 @@ def _find_card_object_for_play(state, seat_index: int, card_id: str) -> Cards:
         if c.identity() == desired.identity():
             return c
 
-    if state.player_trump is not None and state.player_trump.identity() == desired.identity():
+    if (
+        state.player_trump is not None
+        and state.player_trump.identity() == desired.identity()
+    ):
         return state.player_trump
 
     raise ValueError("Card not found to play.")
@@ -194,6 +231,9 @@ def apply_play_card(state, seat_index: int, card_id: str) -> None:
         raise ValueError("Not expecting a card play right now.")
     if card_id not in legal.cardIds:
         raise ValueError("Illegal card.")
+
+    pre_trick_len = len(state.s)
+    led_suit = state.currentSuit
 
     card_obj = _find_card_object_for_play(state, seat_index, card_id)
 
@@ -224,6 +264,14 @@ def apply_play_card(state, seat_index: int, card_id: str) -> None:
         state.leaderIndex,
     )
 
+    _infer_void_if_failed_follow(
+        state,
+        seat_index=seat_index,
+        pre_trick_len=pre_trick_len,
+        led_suit=led_suit,
+        played_suit=card_obj.suit,
+    )
+
     state.event_log.append(f"P{seat_index+1} played {card_obj.identity()}.")
 
 
@@ -252,7 +300,8 @@ def resolve_if_catch_complete(state) -> None:
         state.team2Catches.append(list(state.s))
 
     state.event_log.append(
-        f"Catch {state.catchNumber} won by P{winner_index+1} (Team {winner_team}) for {points} points."
+        f"Catch {state.catchNumber} won by P{winner_index+1} "
+        f"(Team {winner_team}) for {points} points."
     )
 
     (
@@ -279,13 +328,15 @@ def resolve_if_catch_complete(state) -> None:
         if bidding_points >= state.finalBidValue:
             state.winnerTeam = bidder_team
             state.event_log.append(
-                f"GAME OVER: Team {bidder_team} wins ({bidding_points} >= {state.finalBidValue})."
+                f"GAME OVER: Team {bidder_team} wins "
+                f"({bidding_points} >= {state.finalBidValue})."
             )
         else:
             other_team = 2 if bidder_team == 1 else 1
             state.winnerTeam = other_team
             state.event_log.append(
-                f"GAME OVER: Team {other_team} wins ({bidding_points} < {state.finalBidValue})."
+                f"GAME OVER: Team {other_team} wins "
+                f"({bidding_points} < {state.finalBidValue})."
             )
 
         state.phase = "GAME_OVER"
