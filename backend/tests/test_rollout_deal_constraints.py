@@ -113,6 +113,6 @@ def test_rollout_worker_fallback_does_not_hang_when_constraints_impossible(
     # Our fake minimax always returns True once
     assert out.get(True) == 1
 
-monke = MonkeyPatch()
+# monke = MonkeyPatch()
 
-test_rollout_worker_fallback_does_not_hang_when_constraints_impossible(monke)
+# test_rollout_worker_fallback_does_not_hang_when_constraints_impossible(monke)

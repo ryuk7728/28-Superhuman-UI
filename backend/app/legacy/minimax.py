@@ -352,7 +352,6 @@ def result(s,a,currentSuit,trumpReveal,chose,playerTrump,trumpPlayed,trumpIndice
         if (a and ((playerChance+len(s))%4)!=finalBid-1): 
             players[finalBid-1]['cards'].append(playerTrump)
             undo_info['trump_added_to_player'] = finalBid-1
-            playerTrump = None
         elif a:
              players[finalBid-1]['cards'].append(playerTrump)
              undo_info['trump_added_to_player'] = finalBid-1

@@ -190,9 +190,12 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
     # Base known set for this bot (own hand + played)
     base_known = set(snapshot["botHandCardIds"]) | played_set
 
-    # If bot is bidder and concealed trump exists, include it as known
+    # Concealed trump indicator card id (should remain stable in your new legacy)
     concealed_trump_card_id = snapshot.get("concealedTrumpCardId")
-    if concealed_trump_card_id and (bot_seat == bidder_seat or trumpReveal):
+
+    # Only the bidder knows the concealed trump before reveal.
+    # (After reveal, we enforce "indicator must be in bidder's hand" explicitly below.)
+    if concealed_trump_card_id and bot_seat == bidder_seat:
         base_known.add(concealed_trump_card_id)
 
     # If trump is already revealed, suit is known for all
@@ -209,7 +212,7 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
         sim_trump_suit = None
 
         # If trump is revealed, the suit is known.
-        # BUT legacy logic may still need playerTrump to be non-None when chose=True.
+        # Keep playerTrump non-None for legacy logic.
         if trumpReveal:
             sim_trump_suit = known_trump_suit
 
@@ -227,22 +230,23 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
 
         else:
             if bot_seat == bidder_seat:
+                if concealed_trump_card_id is None:
+                    raise RuntimeError(
+                        "Invariant violated: bidder rollouts before reveal require "
+                        "concealedTrumpCardId, but it is None.")
                 # bidder knows true concealed trump
-                if concealed_trump_card_id is not None:
-                    found = None
-                    for c in bot_hand:
-                        if to_card_id(c) == concealed_trump_card_id:
-                            found = c
-                            break
-                    sim_player_trump = (
-                        found
-                        if found is not None
-                        else from_card_id(concealed_trump_card_id)
-                    )
-                    sim_trump_suit = sim_player_trump.suit
-                else:
-                    sim_player_trump = None
-                    sim_trump_suit = None
+                found = None
+                for c in bot_hand:
+                    if to_card_id(c) == concealed_trump_card_id:
+                        found = c
+                        break
+                sim_player_trump = (
+                    found
+                    if found is not None
+                    else from_card_id(concealed_trump_card_id)
+                )
+                sim_trump_suit = sim_player_trump.suit
+
             else:
                 # non-bidder: trump unknown -> sample from pool
                 idx = rng.randrange(len(pool_ids))
@@ -257,6 +261,44 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
         hands: list[list] = [[], [], [], []]
         hands[bot_seat] = bot_hand[:]  # keep bot's real hand
 
+        # Per-rollout mutable copy (we may decrement bidder need by 1)
+        need_sizes = list(hand_sizes)
+
+        # ------------------------------------------------------------
+        # FIX: If trump is already revealed for this rollout AND this bot
+        # is NOT the bidder, then the concealed trump indicator card is
+        # public information and must be in the bidder's hand (unless it
+        # has already been played).
+        #
+        # Enforce:
+        #  - remove indicator from pool_ids (so it can't be dealt elsewhere)
+        #  - add the *same object* (sim_player_trump) into bidder's hand
+        #  - decrement bidder's needed unknown cards by 1
+        #  - ensure no duplication
+        # ------------------------------------------------------------
+        if (
+            trumpReveal
+            and bot_seat != bidder_seat
+            and concealed_trump_card_id is not None
+            and concealed_trump_card_id not in played_set
+        ):
+            if sim_player_trump is None:
+                sim_player_trump = from_card_id(concealed_trump_card_id)
+
+            already_in_bidder_hand = any(
+                to_card_id(c) == concealed_trump_card_id for c in hands[bidder_seat]
+            )
+            if not already_in_bidder_hand:
+                hands[bidder_seat].append(sim_player_trump)
+                need_sizes[bidder_seat] -= 1
+                if need_sizes[bidder_seat] < 0:
+                    # Defensive guard: snapshot handSizes should include the
+                    # indicator in bidder's hand when trumpReveal=True.
+                    need_sizes[bidder_seat] = 0
+
+            # Ensure it cannot be dealt to anyone else
+            pool_ids = [cid for cid in pool_ids if cid != concealed_trump_card_id]
+
         seats_to_fill = [s for s in range(4) if s != bot_seat]
 
         dealt_map: dict[int, list[str]] | None = None
@@ -267,7 +309,7 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
                     rng=rng,
                     pool_ids=pool_ids,
                     seats_to_fill=seats_to_fill,
-                    hand_sizes=hand_sizes,
+                    hand_sizes=need_sizes,
                     suit_matrix=suit_matrix,
                 )
                 if dealt_map is not None:
@@ -275,17 +317,21 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
 
         if dealt_map is not None:
             for seat in seats_to_fill:
-                hands[seat] = [from_card_id(cid) for cid in dealt_map[seat]]
+                # If we pre-assigned the indicator to bidder, preserve it and
+                # fill the remaining needed cards.
+                existing = hands[seat]
+                hands[seat] = existing + [from_card_id(cid) for cid in dealt_map[seat]]
         else:
             # Fallback: unconstrained slice dealing
             pool_idx = 0
             for seat in range(4):
                 if seat == bot_seat:
                     continue
-                need = hand_sizes[seat]
+                need = need_sizes[seat]
                 slice_ids = pool_ids[pool_idx : pool_idx + need]
                 pool_idx += need
-                hands[seat] = [from_card_id(cid) for cid in slice_ids]
+                existing = hands[seat]
+                hands[seat] = existing + [from_card_id(cid) for cid in slice_ids]
 
         # Build legacy players structure
         players = []
