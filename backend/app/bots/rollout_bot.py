@@ -176,6 +176,7 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
 
     s_card_ids: list[str] = snapshot["sCardIds"]
     s_cards = [from_card_id(cid) for cid in s_card_ids]
+    s_set = set(s_card_ids)
 
     bot_hand = [from_card_id(cid) for cid in snapshot["botHandCardIds"]]
     hand_sizes: list[int] = snapshot["handSizes"]
@@ -233,7 +234,9 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
                 if concealed_trump_card_id is None:
                     raise RuntimeError(
                         "Invariant violated: bidder rollouts before reveal require "
-                        "concealedTrumpCardId, but it is None.")
+                        "concealedTrumpCardId, but it is None."
+                    )
+
                 # bidder knows true concealed trump
                 found = None
                 for c in bot_hand:
@@ -246,7 +249,6 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
                     else from_card_id(concealed_trump_card_id)
                 )
                 sim_trump_suit = sim_player_trump.suit
-
             else:
                 # non-bidder: trump unknown -> sample from pool
                 idx = rng.randrange(len(pool_ids))
@@ -261,7 +263,7 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
         hands: list[list] = [[], [], [], []]
         hands[bot_seat] = bot_hand[:]  # keep bot's real hand
 
-        # Per-rollout mutable copy (we may decrement bidder need by 1)
+        # Per-rollout mutable copy (we may decrement needs)
         need_sizes = list(hand_sizes)
 
         # ------------------------------------------------------------
@@ -269,12 +271,6 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
         # is NOT the bidder, then the concealed trump indicator card is
         # public information and must be in the bidder's hand (unless it
         # has already been played).
-        #
-        # Enforce:
-        #  - remove indicator from pool_ids (so it can't be dealt elsewhere)
-        #  - add the *same object* (sim_player_trump) into bidder's hand
-        #  - decrement bidder's needed unknown cards by 1
-        #  - ensure no duplication
         # ------------------------------------------------------------
         if (
             trumpReveal
@@ -299,6 +295,65 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
             # Ensure it cannot be dealt to anyone else
             pool_ids = [cid for cid in pool_ids if cid != concealed_trump_card_id]
 
+        # ------------------------------------------------------------
+        # NEW CONSTRAINT (heuristic):
+        # If this is the first time the led suit has appeared in the game
+        # (excluding the current trick), and everyone has followed led suit
+        # so far this trick, and the Jack of the led suit is unknown, then
+        # assume seats that already played did NOT have that Jack.
+        # Force-assign the Jack to a seat yet to play in this trick AFTER
+        # the current actor (the bot).
+        #
+        # Trigger applies even if len(s_card_ids) == 1.
+        # ------------------------------------------------------------
+        try:
+            if len(s_card_ids) >= 1 and currentSuit:
+                led_suit = currentSuit
+
+                # All played-in-trick cards must match led suit
+                if all(_card_suit_from_id(cid) == led_suit for cid in s_card_ids):
+                    # Suit must not have appeared earlier (exclude current trick)
+                    prior_played = [cid for cid in played_set if cid not in s_set]
+                    if all(_card_suit_from_id(cid) != led_suit for cid in prior_played):
+                        jack_id = f"{led_suit}_Jack"
+
+                        # Jack must be truly unknown (in pool)
+                        if jack_id in pool_ids:
+                            actor = (leaderIndex + len(s_card_ids)) % 4
+                            if actor == bot_seat:
+                                # Seats still to play after the actor in this trick
+                                remaining_after_actor = [
+                                    (leaderIndex + i) % 4
+                                    for i in range(len(s_card_ids) + 1, 4)
+                                ]
+
+                                row = SUIT_MATRIX_INDEX.get(led_suit)
+                                candidates: list[int] = []
+                                for seat in remaining_after_actor:
+                                    if need_sizes[seat] <= 0:
+                                        continue
+                                    if row is not None and suit_matrix[row][seat] == 0:
+                                        continue
+                                    candidates.append(seat)
+
+                                if candidates:
+                                    target = rng.choice(candidates)
+
+                                    already = any(
+                                        to_card_id(c) == jack_id for c in hands[target]
+                                    )
+                                    if not already:
+                                        hands[target].append(from_card_id(jack_id))
+                                        need_sizes[target] -= 1
+                                        if need_sizes[target] < 0:
+                                            need_sizes[target] = 0
+
+                                    # Remove from pool so it can't be dealt elsewhere
+                                    pool_ids = [cid for cid in pool_ids if cid != jack_id]
+        except Exception:
+            # Safety: never crash rollouts due to heuristic constraints
+            pass
+
         seats_to_fill = [s for s in range(4) if s != bot_seat]
 
         dealt_map: dict[int, list[str]] | None = None
@@ -317,8 +372,7 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
 
         if dealt_map is not None:
             for seat in seats_to_fill:
-                # If we pre-assigned the indicator to bidder, preserve it and
-                # fill the remaining needed cards.
+                # Preserve any pre-assigned cards (trump indicator / jack constraint)
                 existing = hands[seat]
                 hands[seat] = existing + [from_card_id(cid) for cid in dealt_map[seat]]
         else:
@@ -494,9 +548,7 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
                     "resultCallLogTail": result_call_log,
                 }
 
-                fn = (
-                    f"crash_{int(time.time()*1000)}_pid{os.getpid()}_seed{seed}.json"
-                )
+                fn = f"crash_{int(time.time()*1000)}_pid{os.getpid()}_seed{seed}.json"
                 path = _dump_dir_backend_root() / fn
                 path.write_text(json.dumps(dump, indent=2), encoding="utf-8")
 
