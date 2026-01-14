@@ -43,7 +43,7 @@ export function ManualDealRestPanel({
     });
   }
 
-  function removeCard(seat: number, cid: string) {
+  function removeCard(cid: string) {
     setHands((prev) => {
       const next = prev.map((h) => h.filter((x) => x !== cid));
       return next;
@@ -109,7 +109,7 @@ export function ManualDealRestPanel({
                   key={cid}
                   type="button"
                   className="rounded border border-gray-300 px-2 py-1 text-xs"
-                  onClick={() => removeCard(i, cid)}
+                  onClick={() => removeCard(cid)}
                   title="Click to remove"
                 >
                   {cid}

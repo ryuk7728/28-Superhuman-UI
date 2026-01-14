@@ -58,7 +58,7 @@ export function SetupPage({ onGameCreated }: Props) {
     });
   }
 
-  function removeCard(playerIndex: number, cid: string) {
+  function removeCard(cid: string) {
     setHands((prev) => {
       const next = prev.map((h) => h.filter((x) => x !== cid));
       return next;
@@ -151,7 +151,7 @@ export function SetupPage({ onGameCreated }: Props) {
                     <button
                       key={cid}
                       className="rounded border border-gray-300 px-2 py-1"
-                      onClick={() => removeCard(i, cid)}
+                      onClick={() => removeCard(cid)}
                       type="button"
                       title="Click to remove"
                     >
