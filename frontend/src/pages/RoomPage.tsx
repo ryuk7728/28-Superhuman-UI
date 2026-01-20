@@ -182,13 +182,21 @@ export function RoomPage({ gameId }: Props) {
 
       <div className="mt-4 space-y-3">
         {legal && (legal.type === "BID_R1" || legal.type === "BID_R2") && (
-          <BiddingPanel actions={legal} onSubmitBid={onSubmitBid} />
+          <BiddingPanel
+            actions={legal}
+            seatTypes={state.seatTypes}
+            onSubmitBid={onSubmitBid}
+          />
         )}
 
         {legal &&
           (legal.type === "SELECT_TRUMP_R1" ||
             legal.type === "SELECT_TRUMP_R2") && (
-            <TrumpSelectPanel actions={legal} onSelect={onSelectTrump} />
+            <TrumpSelectPanel
+              actions={legal}
+              seatTypes={state.seatTypes}
+              onSelect={onSelectTrump}
+            />
           )}
 
         {legal && legal.type === "MANUAL_DEAL_REST" && (

@@ -1,12 +1,13 @@
 import { useMemo, useState } from "react";
-import type { LegalActions } from "../api/types";
+import type { GameState, LegalActions } from "../api/types";
 
 type Props = {
   actions: LegalActions;
+  seatTypes: GameState["seatTypes"];
   onSubmitBid: (seatIndex: number, bidValue: number) => void;
 };
 
-export function BiddingPanel({ actions, onSubmitBid }: Props) {
+export function BiddingPanel({ actions, seatTypes, onSubmitBid }: Props) {
   const [bid, setBid] = useState<string>("");
 
   const isR1 = actions.type === "BID_R1";
@@ -19,6 +20,8 @@ export function BiddingPanel({ actions, onSubmitBid }: Props) {
 
   if (!(isR1 || isR2) || seat === null) return null;
 
+  const isHuman = seatTypes[seat] === "human";
+
   return (
     <div className="rounded border border-gray-200 p-3">
       <div className="font-semibold">
@@ -29,30 +32,37 @@ export function BiddingPanel({ actions, onSubmitBid }: Props) {
         Enter bid &gt; {actions.minBidExclusive} and ≤ {actions.maxBidInclusive}
       </div>
 
+      {!isHuman && (
+        <div className="mt-1 text-sm text-gray-500">Bot controls this seat.</div>
+      )}
+
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <input
           className="w-40 rounded border border-gray-300 p-2"
           value={bid}
           onChange={(e) => setBid(e.target.value)}
           placeholder="e.g. 16"
+          disabled={!isHuman}
         />
         <button
-          className="rounded bg-black px-3 py-2 text-white"
+          className="rounded bg-black px-3 py-2 text-white disabled:bg-gray-400"
           type="button"
           onClick={() => {
             const n = Number(bid);
             onSubmitBid(seat, n);
             setBid("");
           }}
+          disabled={!isHuman}
         >
           Submit Bid
         </button>
 
         {actions.canPass && (
           <button
-            className="rounded border border-gray-300 px-3 py-2"
+            className="rounded border border-gray-300 px-3 py-2 disabled:text-gray-400"
             type="button"
             onClick={() => onSubmitBid(seat, 0)}
+            disabled={!isHuman}
           >
             Pass
           </button>
@@ -60,10 +70,11 @@ export function BiddingPanel({ actions, onSubmitBid }: Props) {
 
         {isR1 && actions.canRedeal && (
           <button
-            className="rounded border border-gray-300 px-3 py-2"
+            className="rounded border border-gray-300 px-3 py-2 disabled:text-gray-400"
             type="button"
             onClick={() => onSubmitBid(seat, -1)}
             title="Redeal request (not implemented yet)"
+            disabled={!isHuman}
           >
             Redeal (-1)
           </button>
