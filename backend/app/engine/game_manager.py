@@ -31,9 +31,7 @@ class GameManager:
         remaining = [c for c in full_deck if c.identity() not in used_identities]
         random.shuffle(remaining)
 
-        bidding_order = [
-            (starting_bidder_index + i) % 4 for i in range(4)
-        ]
+        bidding_order = [(starting_bidder_index + i) % 4 for i in range(4)]
 
         game_id = str(uuid.uuid4())
         state = GameState(
@@ -54,6 +52,69 @@ class GameManager:
 
     def get_game(self, game_id: str) -> GameState | None:
         return self._games.get(game_id)
+
+    def delete_game(self, game_id: str) -> None:
+        self._games.pop(game_id, None)
+
+    def redeal_first4_in_place(self, state: GameState) -> None:
+        """
+        In-place redeal (same gameId):
+          - shuffle a fresh 32-card deck
+          - deal 4 cards each (16 total)
+          - set draw_pile to the remaining 16
+          - reset bidding state to BIDDING_R1 step 0
+          - clear any previously chosen concealed trump etc.
+        """
+        deck = Cards.packOf28()
+        random.shuffle(deck)
+
+        new_players = [deck[0:4], deck[4:8], deck[8:12], deck[12:16]]
+        new_draw = deck[16:32]
+
+        state.players_cards = [list(h) for h in new_players]
+        state.draw_pile = list(new_draw)
+
+        # Reset bidding (R1)
+        state.phase = "BIDDING_R1"
+        state.bidding_r1_step = 0
+        state.bidding_r1_bids_by_pos = [0, 0, 0, 0]
+        state.bidding_r1_passes_by_pos = [False, False, False, False]
+        state.bidding_r1_final_pos = 0
+        state.bids_r1_by_seat = [0, 0, 0, 0]
+
+        # Reset bidding (R2)
+        state.bidding_r2_step = 0
+        state.bidding_r2_bids_by_pos = [0, 0, 0, 0]
+        state.bids_r2_by_seat = [0, 0, 0, 0]
+
+        # Reset bidder / trump selection artifacts
+        state.round1_bidder_seat = None
+        state.round1_bid_value = None
+        state.final_bidder_seat = None
+        state.final_bid_value = None
+        state.player_trump = None
+
+        # Reset any play state (safety)
+        state.finalBid = 0
+        state.finalBidValue = 0
+        state.trumpSuit = None
+        state.trumpReveal = False
+        state.known = False
+        state.chose = False
+        state.leaderIndex = state.starting_bidder_index
+        state.catchNumber = 1
+        state.s = []
+        state.currentSuit = ""
+        state.trumpPlayed = False
+        state.trumpIndice = [0, 0, 0, 0]
+        state.team1Points = 0
+        state.team2Points = 0
+        state.team1Catches = []
+        state.team2Catches = []
+        state.play_players = []
+        state.winnerTeam = None
+
+        state.event_log.append("Redeal performed (first-4 re-dealt).")
 
 
 game_manager = GameManager()

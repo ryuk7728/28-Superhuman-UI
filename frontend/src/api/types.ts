@@ -75,4 +75,5 @@ export type LegalActions =
 export type WsMessage =
   | { type: "STATE_UPDATE"; state: GameState }
   | { type: "LEGAL_ACTIONS"; actions: LegalActions }
-  | { type: "ERROR"; message: string };
+  | { type: "ERROR"; message: string }
+  | { type: "GAME_ABORTED"; reason: string };

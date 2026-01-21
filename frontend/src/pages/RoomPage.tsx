@@ -63,6 +63,15 @@ export function RoomPage({ gameId }: Props) {
           return;
         }
 
+        if (msg.type === "GAME_ABORTED") {
+          setError(`Game aborted: ${msg.reason}. Returning to setup...`);
+          // Hard redirect to setup/home (simplest, no router assumptions)
+          window.setTimeout(() => {
+            window.location.href = "/";
+          }, 200);
+          return;
+        }
+
         setWarning("Received unknown WS message type.");
       } catch {
         setWarning("Received non-JSON WS message.");
