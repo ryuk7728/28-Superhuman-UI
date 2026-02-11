@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import ProcessPoolExecutor
+from typing import Callable, Any
 
 from app.bots.rollout_bot import choose_action_with_rollouts_parallel
 from app.engine.play_engine import (
@@ -9,14 +11,27 @@ from app.engine.play_engine import (
     resolve_if_catch_complete,
 )
 
+# Delay to display completed trick (4 cards visible)
+TRICK_DISPLAY_DELAY_SECONDS = 3
+# Pause duration for empty table between tricks
+EMPTY_TABLE_PAUSE_SECONDS = 1
 
 BOT_SEATS = {0, 2}
 
 
-async def advance_bots_until_human(state, pool: ProcessPoolExecutor, bot_sem) -> None:
+async def advance_bots_until_human(
+    state,
+    pool: ProcessPoolExecutor,
+    bot_sem,
+    websocket: Any,
+    send_state_fn: Callable,
+) -> None:
     """
     Runs bot turns (seats 0 and 2) until current actor is human (1 or 3) or game ends.
     Uses multiprocessing rollouts to decide bot actions.
+
+    When a bot completes a trick (4 cards), sends state to frontend and waits
+    before clearing, so the completed trick is visible for 5 seconds.
     """
     while state.phase == "PLAY":
         actor = (state.leaderIndex + len(state.s)) % 4
@@ -34,4 +49,14 @@ async def advance_bots_until_human(state, pool: ProcessPoolExecutor, bot_sem) ->
         else:
             apply_play_card(state, payload["seatIndex"], str(payload["cardId"]))
 
-        resolve_if_catch_complete(state)
+        # If trick is complete (4 cards), send state to frontend and wait
+        # before clearing, so the completed trick is visible
+        if len(state.s) == 4:
+            await send_state_fn(websocket, state)
+            await asyncio.sleep(TRICK_DISPLAY_DELAY_SECONDS)
+            # Clear the trick and send empty state for smooth transition
+            resolve_if_catch_complete(state)
+            await send_state_fn(websocket, state)
+            await asyncio.sleep(EMPTY_TABLE_PAUSE_SECONDS)
+        else:
+            resolve_if_catch_complete(state)

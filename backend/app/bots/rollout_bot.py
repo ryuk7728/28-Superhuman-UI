@@ -7,6 +7,7 @@ import asyncio
 import os
 import time
 import random
+import threading
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from typing import Any
@@ -22,6 +23,74 @@ from app.legacy import minimax as legacy_minimax
 # -----------------------------
 # Worker-side helpers (picklable)
 # -----------------------------
+
+_ray_inited = False
+_ray_rollout_remote = None
+
+_rollout_metrics_lock = threading.Lock()
+_rollout_metrics_count = 0
+_rollout_metrics_last_ts: float | None = None
+
+
+def _record_rollouts(n: int) -> None:
+    if not settings.rollout_metrics:
+        return
+
+    global _rollout_metrics_count, _rollout_metrics_last_ts
+
+    now = time.monotonic()
+    interval = max(1.0, float(settings.rollout_metrics_interval))
+
+    with _rollout_metrics_lock:
+        if _rollout_metrics_last_ts is None:
+            _rollout_metrics_last_ts = now
+
+        _rollout_metrics_count += n
+        elapsed = now - _rollout_metrics_last_ts
+
+        if elapsed >= interval:
+            rps = _rollout_metrics_count / elapsed if elapsed > 0 else 0.0
+            print(
+                f"[rollout-metrics] rollouts/sec={rps:.1f} "
+                f"interval={elapsed:.1f}s total={_rollout_metrics_count}"
+            )
+            _rollout_metrics_last_ts = now
+            _rollout_metrics_count = 0
+
+
+def _ensure_ray():
+    """
+    Lazily initialize Ray for distributed rollouts.
+    """
+    global _ray_inited
+    if _ray_inited:
+        import ray
+
+        return ray
+
+    try:
+        import ray
+    except Exception as e:
+        raise RuntimeError(
+            "APP_ROLLOUT_BACKEND=ray but 'ray' is not installed."
+        ) from e
+
+    address = settings.ray_address
+    if address:
+        ray.init(address=address, ignore_reinit_error=True)
+    else:
+        ray.init(ignore_reinit_error=True)
+
+    _ray_inited = True
+    return ray
+
+
+def _get_ray_rollout_remote():
+    global _ray_rollout_remote
+    ray = _ensure_ray()
+    if _ray_rollout_remote is None:
+        _ray_rollout_remote = ray.remote(rollout_worker)
+    return ray, _ray_rollout_remote
 
 
 def _full_deck_card_ids() -> list[str]:
@@ -639,18 +708,30 @@ async def choose_action_with_rollouts_parallel(
     base = total_rollouts // worker_count
     rem = total_rollouts % worker_count
 
-    loop = asyncio.get_running_loop()
-    tasks = []
-
-    for i in range(worker_count):
-        n = base + (1 if i < rem else 0)
-        seed = _seed_entropy()
-
-        fut = pool.submit(rollout_worker, snapshot, n, seed)
-        tasks.append(asyncio.wrap_future(fut, loop=loop))
+    use_ray = settings.rollout_backend == "ray"
 
     try:
-        results = await asyncio.gather(*tasks)
+        if use_ray:
+            ray, remote_fn = _get_ray_rollout_remote()
+            refs = []
+            for i in range(worker_count):
+                n = base + (1 if i < rem else 0)
+                seed = _seed_entropy()
+                refs.append(remote_fn.remote(snapshot, n, seed))
+
+            results = await asyncio.to_thread(ray.get, refs)
+        else:
+            loop = asyncio.get_running_loop()
+            tasks = []
+
+            for i in range(worker_count):
+                n = base + (1 if i < rem else 0)
+                seed = _seed_entropy()
+
+                fut = pool.submit(rollout_worker, snapshot, n, seed)
+                tasks.append(asyncio.wrap_future(fut, loop=loop))
+
+            results = await asyncio.gather(*tasks)
     except Exception as e:
         msg = str(e)
         if "ROLL_OUT_CRASH_DUMP=" in msg:
@@ -666,6 +747,8 @@ async def choose_action_with_rollouts_parallel(
         if legal.type == "REVEAL_CHOICE":
             return ("REVEAL", {"seatIndex": bot_seat, "reveal": False})
         return ("PLAY", {"seatIndex": bot_seat, "cardId": legal.cardIds[0]})
+
+    _record_rollouts(total_rollouts)
 
     merged: Counter = Counter()
     for d in results:

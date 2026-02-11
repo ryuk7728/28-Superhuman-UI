@@ -22,6 +22,7 @@ export type GameState = {
     isBidder: boolean;
   }>;
   drawPileCount: number;
+  autoDeal: boolean;
   bidsR1: number[];
   bidsR2: number[];
   round1BidderSeat: number | null;
@@ -35,6 +36,7 @@ export type GameState = {
     currentSuit: string;
     trumpReveal: boolean;
     trumpSuit: string | null;
+    trumpCardId: string | null;
     trickCards: Card[];
     trumpIndice: number[];
     team1Points: number;

@@ -70,6 +70,9 @@ class GameState:
     # Concealed trump indicator card (removed from bidder hand)
     player_trump: Cards | None = None
 
+    # Auto-deal mode flag (if True, skip MANUAL_DEAL_REST phase)
+    auto_deal: bool = False
+
     # NEW: Suit void knowledge (persistent during PLAY; void stays void)
     # Rows: Hearts, Diamonds, Spades, Clubs; Cols: seat 0..3
     suit_matrix: list[list[int]] = field(default_factory=_default_suit_matrix)
@@ -121,8 +124,15 @@ class GameState:
 
     def to_public_dict(self) -> dict:
         from app.engine.serializer import serialize_card
+        from app.engine.cards_adapter import to_card_id
 
         trump_suit_visible = self.trumpSuit if self.trumpReveal else None
+        # Only expose trump card ID when revealed
+        trump_card_id_visible = (
+            to_card_id(self.player_trump)
+            if self.trumpReveal and self.player_trump is not None
+            else None
+        )
 
         suit_knowledge = {
             "Hearts": self.suit_matrix[0],
@@ -149,6 +159,7 @@ class GameState:
                 for i, hand in enumerate(self.players_cards)
             ],
             "drawPileCount": len(self.draw_pile),
+            "autoDeal": self.auto_deal,
             "bidsR1": self.bids_r1_by_seat,
             "bidsR2": self.bids_r2_by_seat,
             "round1BidderSeat": self.round1_bidder_seat,
@@ -165,6 +176,7 @@ class GameState:
                 "currentSuit": self.currentSuit,
                 "trumpReveal": self.trumpReveal,
                 "trumpSuit": trump_suit_visible,
+                "trumpCardId": trump_card_id_visible,
                 "trickCards": [serialize_card(c) for c in self.s],
                 "trumpIndice": self.trumpIndice,
                 "team1Points": self.team1Points,

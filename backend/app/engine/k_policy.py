@@ -6,7 +6,7 @@ from app.settings import settings
 def compute_k(catch_number: int) -> int:
     """
     Your required policy:
-    - First 4 catches: k=2
+    - First 2 catches: k=2
     - After that: k = tricks left including current
       catch 5 -> 4, 6 -> 3, 7 -> 2, 8 -> 1
     """
@@ -14,7 +14,7 @@ def compute_k(catch_number: int) -> int:
         return settings.k_override
 
     if catch_number <= 2:
-        return 3
+        return 2
     elif catch_number <= 4:
         return 3
     else:
