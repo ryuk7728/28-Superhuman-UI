@@ -203,7 +203,15 @@ $bot-color: #ef4444;
   flex-direction: column;
   align-items: center;
   gap: 4px;
+  transform: translate(var(--icon-shift-x, 0px), var(--icon-shift-y, 0px));
 }
+
+// Icon-only position controls per seat (does NOT move hand cards)
+// Seat map: 0=T-1000 (east), 1=You (south), 2=Skynet (west), 3=Partner (north)
+.player-area[data-seat="0"] { --icon-shift-x: 0px; --icon-shift-y: 0px; }
+.player-area[data-seat="1"] { --icon-shift-x: 0px; --icon-shift-y: 10px; }
+.player-area[data-seat="2"] { --icon-shift-x: 0px; --icon-shift-y: -10px; }
+.player-area[data-seat="3"] { --icon-shift-x: 0px; --icon-shift-y: -10px; }
 
 .speech-bubble {
   position: absolute;

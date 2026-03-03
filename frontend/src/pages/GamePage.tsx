@@ -31,6 +31,7 @@ import "../styles/index.scss";
 // Human seats (You = 1, Partner = 3)
 const HUMAN_SEATS = new Set([1, 3]);
 const BOT_SEATS = new Set([0, 2]);
+const BID_SOUND_URL = new URL("../../sounds/bid.mp3", import.meta.url).href;
 
 export interface GamePageProps {
   gameId: string;
@@ -50,6 +51,8 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
   const [isBotBidDelayActive, setIsBotBidDelayActive] = useState(false);
   const botBidDelayTimerRef = useRef<number | null>(null);
   const processedBotBidEventIndexRef = useRef<number>(-1);
+  const bidAudioRef = useRef<HTMLAudioElement | null>(null);
+  const wasHumanBidPanelVisibleRef = useRef(false);
 
   // Trump reveal overlay state
   const [showTrumpRevealOverlay, setShowTrumpRevealOverlay] = useState(false);
@@ -172,6 +175,45 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
       }
     };
   }, []);
+
+  // Initialize the bid sound once.
+  useEffect(() => {
+    const audio = new Audio(BID_SOUND_URL);
+    audio.preload = "auto";
+    bidAudioRef.current = audio;
+
+    return () => {
+      audio.pause();
+      audio.src = "";
+      bidAudioRef.current = null;
+    };
+  }, []);
+
+  // Play bid sound when the human bidding panel actually becomes visible.
+  useEffect(() => {
+    const isHumanBidPanelVisible =
+      (phase === "BIDDING_R1" || phase === "BIDDING_R2") &&
+      (legalActions?.type === "BID_R1" || legalActions?.type === "BID_R2") &&
+      HUMAN_SEATS.has(legalActions.seatIndex) &&
+      !isBotBidDelayActive;
+
+    const shouldPlay =
+      isHumanBidPanelVisible && !wasHumanBidPanelVisibleRef.current;
+    wasHumanBidPanelVisibleRef.current = isHumanBidPanelVisible;
+    if (!shouldPlay) return;
+
+    const audio = bidAudioRef.current;
+    if (!audio) return;
+
+    try {
+      audio.currentTime = 0;
+      void audio.play().catch(() => {
+        // Ignore autoplay rejections; user interaction usually unlocks audio.
+      });
+    } catch {
+      // Ignore audio runtime errors to avoid breaking gameplay.
+    }
+  }, [phase, legalActions, isBotBidDelayActive]);
 
   // Handle bid submission
   const handleBid = useCallback(
