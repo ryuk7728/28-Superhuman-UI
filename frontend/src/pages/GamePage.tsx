@@ -18,7 +18,6 @@ import {
   RevealTrumpPanel,
   ScorePanel,
   TrumpIndicator,
-  TricksCounter,
   GameOverModal,
   PhaseIndicator,
   TrumpRevealOverlay,
@@ -41,9 +40,8 @@ export interface GamePageProps {
 export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
 
   // Local UI state
-  const [showBotCards, setShowBotCards] = useState(false);
+  const showBotCards = false;
   const [selectedCard, setSelectedCard] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [abortReason, setAbortReason] = useState<string | null>(null);
   const [botBidBubble, setBotBidBubble] = useState<{
     seatIndex: number;
@@ -69,10 +67,7 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
     sendRevealChoice,
   } = useGameWebSocket({
     gameId: gameId || "",
-    onError: (msg) => {
-      setErrorMessage(msg);
-      setTimeout(() => setErrorMessage(null), 3000);
-    },
+    onError: () => {},
     onGameAborted: (reason) => {
       setAbortReason(reason);
     },
@@ -305,19 +300,6 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
     if (finalBidderSeat === null || finalBidderSeat === undefined) return null;
     return HUMAN_SEATS.has(finalBidderSeat) ? "humans" : "bots";
   }, [finalBidderSeat]);
-
-  // Calculate tricks won (approximate based on catch number)
-  const humanTricks = useMemo(() => {
-    if (!gameState?.play) return 0;
-    const totalCatches = (gameState.play.catchNumber || 1) - 1;
-    // This is approximate - for accurate count we'd need to track catches
-    return Math.floor(totalCatches / 2);
-  }, [gameState?.play]);
-
-  const botTricks = useMemo(() => {
-    const totalCatches = (gameState?.play?.catchNumber || 1) - 1;
-    return totalCatches - humanTricks;
-  }, [gameState?.play?.catchNumber, humanTricks]);
 
   // Build player data for GameArena
   const players = useMemo(() => {
@@ -654,24 +636,6 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
 
   return (
     <div>
-      {/* Debug controls */}
-      <div className="debug-controls">
-        <label>
-          <input
-            type="checkbox"
-            checked={showBotCards}
-            onChange={(e) => setShowBotCards(e.target.checked)}
-          />
-          Show Bot Cards
-        </label>
-        <span style={{ marginLeft: 16 }}>
-          Phase: {phase} | Turn: {PLAYER_NAMES[turnIndex] || "N/A"}
-        </span>
-        {errorMessage && (
-          <span style={{ marginLeft: 16, color: "#ef4444" }}>{errorMessage}</span>
-        )}
-      </div>
-
       {/* Game Arena */}
       <GameArena
         players={players}
@@ -684,7 +648,6 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
               trumpCardId={gameState.play?.trumpCardId}
               isRevealed={gameState.play?.trumpReveal || false}
             />
-            <TricksCounter humanTricks={humanTricks} botTricks={botTricks} />
           </>
         }
         uiPanelScore={

@@ -15,7 +15,6 @@ import {
   TrumpSelectPanel,
   ScorePanel,
   TrumpIndicator,
-  TricksCounter,
   GameOverModal,
   PhaseIndicator,
 } from "../components/panels";
@@ -95,8 +94,6 @@ export const TestArenaPage: React.FC = () => {
   const [currentBid, setCurrentBid] = useState<number | null>(null);
   const [trumpSuit, setTrumpSuit] = useState<string | null>(null);
   const [trumpRevealed, setTrumpRevealed] = useState(false);
-  const [humanTricks, setHumanTricks] = useState(0);
-  const [botTricks, setBotTricks] = useState(0);
   const [showGameOver, setShowGameOver] = useState(false);
 
   // Mock legal cards (all cards of the active human player for testing)
@@ -107,12 +104,6 @@ export const TestArenaPage: React.FC = () => {
 
   // Handle trick completion - clear cards and move to next trick
   const handleTrickComplete = useCallback(() => {
-    // Randomly assign trick to a team
-    if (Math.random() > 0.5) {
-      setHumanTricks((prev) => prev + 1);
-    } else {
-      setBotTricks((prev) => prev + 1);
-    }
     setTrickCards([]);
     setLeadSeatIndex(undefined);
   }, []);
@@ -208,8 +199,6 @@ export const TestArenaPage: React.FC = () => {
     setCurrentBid(null);
     setTrumpSuit(null);
     setTrumpRevealed(false);
-    setHumanTricks(0);
-    setBotTricks(0);
     setShowGameOver(false);
   };
 
@@ -353,7 +342,6 @@ export const TestArenaPage: React.FC = () => {
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             <PhaseIndicator phase="PLAY" currentPlayerSeat={activePlayer} />
             <TrumpIndicator trumpSuit={trumpSuit} isRevealed={trumpRevealed} />
-            <TricksCounter humanTricks={humanTricks} botTricks={botTricks} />
             <ScorePanel
               humanScore={2}
               botScore={1}

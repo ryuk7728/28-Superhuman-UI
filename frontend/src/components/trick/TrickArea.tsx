@@ -147,13 +147,6 @@ export const TrickArea: React.FC<TrickAreaProps> = ({
     >
       {/* Render cards for all 4 positions */}
       {[0, 1, 2, 3].map((seatIndex) => renderTrickCard(seatIndex))}
-
-      {/* Empty state when no cards played and not fading out */}
-      {displayCards.length === 0 && !fadingOut && (
-        <div className="trick-empty">
-          <span>Play a card</span>
-        </div>
-      )}
     </div>
   );
 };
