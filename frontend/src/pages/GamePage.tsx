@@ -32,6 +32,21 @@ import "../styles/index.scss";
 const HUMAN_SEATS = new Set([1, 3]);
 const BOT_SEATS = new Set([0, 2]);
 const BID_SOUND_URL = new URL("../../sounds/bid.mp3", import.meta.url).href;
+const BOT_BID_EVENT_RE = /^P([1-4])\s+(bid\s+(\d+)|passed(?:\s+\(R2\))?)\.$/i;
+
+function parseBotBidEvent(logLine: string): { seatIndex: number; text: string } | null {
+  const match = logLine.match(BOT_BID_EVENT_RE);
+  if (!match) return null;
+
+  const seatIndex = Number(match[1]) - 1;
+  if (!BOT_SEATS.has(seatIndex)) return null;
+
+  const bidAmount = match[3];
+  return {
+    seatIndex,
+    text: bidAmount ? `Bid ${bidAmount}` : "Pass",
+  };
+}
 
 export interface GamePageProps {
   gameId: string;
@@ -53,6 +68,8 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
   const processedBotBidEventIndexRef = useRef<number>(-1);
   const bidAudioRef = useRef<HTMLAudioElement | null>(null);
   const wasHumanBidPanelVisibleRef = useRef(false);
+  const isHumanBidPanelVisibleRef = useRef(false);
+  const pendingBidPromptSoundRef = useRef(false);
 
   // Trump reveal overlay state
   const [showTrumpRevealOverlay, setShowTrumpRevealOverlay] = useState(false);
@@ -144,18 +161,11 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
       return;
     }
 
-    const lastLog = logs[lastIndex];
-    const m = lastLog.match(/^P([1-4])\s+(bid\s+(\d+)|passed(?:\s+\(R2\))?)\.$/i);
-    if (!m) return;
-
-    const seatIndex = Number(m[1]) - 1;
-    if (!BOT_SEATS.has(seatIndex)) return;
-
-    const bidAmount = m[3];
-    const bubbleText = bidAmount ? `Bid ${bidAmount}` : "Pass";
+    const parsed = parseBotBidEvent(logs[lastIndex]);
+    if (!parsed) return;
 
     processedBotBidEventIndexRef.current = lastIndex;
-    setBotBidBubble({ seatIndex, text: bubbleText });
+    setBotBidBubble({ seatIndex: parsed.seatIndex, text: parsed.text });
     setIsBotBidDelayActive(true);
 
     if (botBidDelayTimerRef.current !== null) {
@@ -189,13 +199,56 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
     };
   }, []);
 
+  // If autoplay blocked the first prompt sound, retry once the user interacts.
+  useEffect(() => {
+    const retryPendingBidPromptSound = () => {
+      if (!pendingBidPromptSoundRef.current) return;
+      if (!isHumanBidPanelVisibleRef.current) return;
+
+      const audio = bidAudioRef.current;
+      if (!audio) return;
+
+      try {
+        audio.currentTime = 0;
+        void audio.play().then(() => {
+          pendingBidPromptSoundRef.current = false;
+        }).catch(() => {
+          // Keep pending true; next interaction can retry.
+        });
+      } catch {
+        // Ignore runtime errors and keep pending true for next interaction.
+      }
+    };
+
+    window.addEventListener("pointerdown", retryPendingBidPromptSound, true);
+    window.addEventListener("keydown", retryPendingBidPromptSound, true);
+
+    return () => {
+      window.removeEventListener("pointerdown", retryPendingBidPromptSound, true);
+      window.removeEventListener("keydown", retryPendingBidPromptSound, true);
+    };
+  }, []);
+
   // Play bid sound when the human bidding panel actually becomes visible.
   useEffect(() => {
+    const logs = gameState?.eventLog || [];
+    const lastIndex = logs.length - 1;
+    const unprocessedBotBidEventExists =
+      lastIndex >= 0 &&
+      parseBotBidEvent(logs[lastIndex]) !== null &&
+      processedBotBidEventIndexRef.current < lastIndex;
+
     const isHumanBidPanelVisible =
       (phase === "BIDDING_R1" || phase === "BIDDING_R2") &&
       (legalActions?.type === "BID_R1" || legalActions?.type === "BID_R2") &&
       HUMAN_SEATS.has(legalActions.seatIndex) &&
-      !isBotBidDelayActive;
+      !isBotBidDelayActive &&
+      !unprocessedBotBidEventExists;
+
+    isHumanBidPanelVisibleRef.current = isHumanBidPanelVisible;
+    if (!isHumanBidPanelVisible) {
+      pendingBidPromptSoundRef.current = false;
+    }
 
     const shouldPlay =
       isHumanBidPanelVisible && !wasHumanBidPanelVisibleRef.current;
@@ -207,13 +260,17 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
 
     try {
       audio.currentTime = 0;
-      void audio.play().catch(() => {
-        // Ignore autoplay rejections; user interaction usually unlocks audio.
+      void audio.play().then(() => {
+        pendingBidPromptSoundRef.current = false;
+      }).catch(() => {
+        // Browser blocked autoplay; retry on next user interaction.
+        pendingBidPromptSoundRef.current = true;
       });
     } catch {
       // Ignore audio runtime errors to avoid breaking gameplay.
+      pendingBidPromptSoundRef.current = true;
     }
-  }, [phase, legalActions, isBotBidDelayActive]);
+  }, [phase, legalActions, isBotBidDelayActive, gameState?.eventLog]);
 
   // Handle bid submission
   const handleBid = useCallback(
