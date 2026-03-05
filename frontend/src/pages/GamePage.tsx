@@ -411,6 +411,53 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
     return isHumanBidPanelVisible ? legalActions.seatIndex : null;
   }, [phase, legalActions, isBotBidDelayActive]);
 
+  // Show bid chip only for the highest/final bidder.
+  const displayedBidInfo = useMemo<{ seat: number | null; value: number | null }>(() => {
+    if (!gameState) {
+      return { seat: null, value: null };
+    }
+
+    if (finalBidderSeat !== null && finalBidderSeat !== undefined && (finalBidValue ?? 0) > 0) {
+      return { seat: finalBidderSeat, value: finalBidValue ?? null };
+    }
+
+    if (phase === "BIDDING_R2") {
+      let highSeat: number | null = null;
+      let highValue = 0;
+      for (let i = 0; i < 4; i++) {
+        const bid = gameState.bidsR2[i] || 0;
+        if (bid > highValue) {
+          highValue = bid;
+          highSeat = i;
+        }
+      }
+      if (highValue > 0 && highSeat !== null) {
+        return { seat: highSeat, value: highValue };
+      }
+      if ((gameState.round1BidValue ?? 0) > 0 && gameState.round1BidderSeat !== null) {
+        return { seat: gameState.round1BidderSeat, value: gameState.round1BidValue };
+      }
+      return { seat: null, value: null };
+    }
+
+    if (phase === "BIDDING_R1") {
+      let highSeat: number | null = null;
+      let highValue = 0;
+      for (let i = 0; i < 4; i++) {
+        const bid = gameState.bidsR1[i] || 0;
+        if (bid > highValue) {
+          highValue = bid;
+          highSeat = i;
+        }
+      }
+      if (highValue > 0 && highSeat !== null) {
+        return { seat: highSeat, value: highValue };
+      }
+    }
+
+    return { seat: null, value: null };
+  }, [gameState, finalBidderSeat, finalBidValue, phase]);
+
   // Build player data for GameArena
   const players = useMemo(() => {
     if (!gameState) return [];
@@ -432,11 +479,8 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
       // Get cards for this player
       const cards = getPlayerCards(seatIndex);
 
-      // Get current bid for this player
       const playerBid =
-        phase === "BIDDING_R2"
-          ? gameState.bidsR2[seatIndex]
-          : gameState.bidsR1[seatIndex];
+        displayedBidInfo.seat === seatIndex ? displayedBidInfo.value : null;
       const isBidGlow = humanBidPromptSeat === seatIndex && isHuman;
 
       const speechBubbleText =
@@ -449,7 +493,7 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
         isActive,
         isBidGlow,
         isBidder,
-        currentBid: playerBid > 0 ? playerBid : null,
+        currentBid: playerBid !== null && playerBid > 0 ? playerBid : null,
         isThinking: isBot && isActive,
         speechBubbleText,
         handContent: (
@@ -479,6 +523,7 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
     selectedCard,
     botBidBubble,
     humanBidPromptSeat,
+    displayedBidInfo,
     getPlayerCards,
     handleCardClick,
   ]);
