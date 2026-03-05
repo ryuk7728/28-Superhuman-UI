@@ -343,6 +343,17 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
     return HUMAN_SEATS.has(finalBidderSeat) ? "humans" : "bots";
   }, [finalBidderSeat]);
 
+  // Human bidding panel visibility seat (used for visual glow cues).
+  const humanBidPromptSeat = useMemo<number | null>(() => {
+    const isHumanBidPanelVisible =
+      (phase === "BIDDING_R1" || phase === "BIDDING_R2") &&
+      (legalActions?.type === "BID_R1" || legalActions?.type === "BID_R2") &&
+      HUMAN_SEATS.has(legalActions.seatIndex) &&
+      !isBotBidDelayActive;
+
+    return isHumanBidPanelVisible ? legalActions.seatIndex : null;
+  }, [phase, legalActions, isBotBidDelayActive]);
+
   // Build player data for GameArena
   const players = useMemo(() => {
     if (!gameState) return [];
@@ -369,6 +380,7 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
         phase === "BIDDING_R2"
           ? gameState.bidsR2[seatIndex]
           : gameState.bidsR1[seatIndex];
+      const isBidGlow = humanBidPromptSeat === seatIndex && isHuman;
 
       const speechBubbleText =
         botBidBubble && botBidBubble.seatIndex === seatIndex
@@ -378,6 +390,7 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
       return {
         seatIndex,
         isActive,
+        isBidGlow,
         isBidder,
         currentBid: playerBid > 0 ? playerBid : null,
         isThinking: isBot && isActive,
@@ -393,6 +406,7 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
             selectedCardId={selectedCard}
             disabled={!canInteract}
             onCardClick={canInteract ? handleCardClick : undefined}
+            className={isBidGlow ? "bid-turn-glow-hand" : ""}
           />
         ),
       };
@@ -407,6 +421,7 @@ export const GamePage: React.FC<GamePageProps> = ({ gameId, onGameEnd }) => {
     legalCardIds,
     selectedCard,
     botBidBubble,
+    humanBidPromptSeat,
     getPlayerCards,
     handleCardClick,
   ]);

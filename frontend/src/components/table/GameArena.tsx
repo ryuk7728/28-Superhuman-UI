@@ -17,6 +17,7 @@ import "../../styles/table.scss";
 export interface PlayerData {
   seatIndex: number;
   isActive: boolean;
+  isBidGlow?: boolean;
   isBidder: boolean;
   currentBid: number | null;
   isThinking: boolean;
@@ -61,6 +62,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                   <PlayerAvatar
                     seatIndex={player.seatIndex}
                     isActive={player.isActive}
+                    isBidGlow={player.isBidGlow}
                     isBidder={player.isBidder}
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}
@@ -75,6 +77,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                   <PlayerAvatar
                     seatIndex={player.seatIndex}
                     isActive={player.isActive}
+                    isBidGlow={player.isBidGlow}
                     isBidder={player.isBidder}
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}
@@ -91,6 +94,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                   <PlayerAvatar
                     seatIndex={player.seatIndex}
                     isActive={player.isActive}
+                    isBidGlow={player.isBidGlow}
                     isBidder={player.isBidder}
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}
