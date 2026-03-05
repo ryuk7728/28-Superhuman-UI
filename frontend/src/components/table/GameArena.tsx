@@ -48,6 +48,8 @@ export const GameArena: React.FC<GameArenaProps> = ({
       <div className="hands-container">
         {players.map((player) => {
           const direction = PLAYER_DIRECTIONS[player.seatIndex];
+          const speechBubbleDirection =
+            direction === "west" ? "left" : direction === "east" ? "right" : undefined;
 
           return (
             <div
@@ -67,9 +69,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}
                     speechBubbleText={player.speechBubbleText}
-                    speechBubbleDirection={
-                      direction === "west" ? "left" : direction === "east" ? "right" : undefined
-                    }
+                    speechBubbleDirection={speechBubbleDirection}
                   />
                 </>
               ) : direction === "north" ? (
@@ -82,9 +82,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}
                     speechBubbleText={player.speechBubbleText}
-                    speechBubbleDirection={
-                      direction === "west" ? "left" : direction === "east" ? "right" : undefined
-                    }
+                    speechBubbleDirection={speechBubbleDirection}
                   />
                   {player.handContent}
                 </>
@@ -99,9 +97,7 @@ export const GameArena: React.FC<GameArenaProps> = ({
                     currentBid={player.currentBid}
                     isThinking={player.isThinking}
                     speechBubbleText={player.speechBubbleText}
-                    speechBubbleDirection={
-                      direction === "west" ? "left" : direction === "east" ? "right" : undefined
-                    }
+                    speechBubbleDirection={speechBubbleDirection}
                   />
                   {player.handContent}
                 </>
