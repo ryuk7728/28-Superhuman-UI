@@ -502,6 +502,7 @@ async def ws_game(websocket: WebSocket, game_id: str) -> None:
 
                     _apply_r2_bid(state, seat=seat, bid_value=bid_value)
 
+                    await _send_state(websocket, state)
                     await _advance_bots_until_human_any_phase(
                         state, pool, bot_sem, websocket, game_id
                     )

@@ -51,6 +51,14 @@ def _get_str_optional(name: str) -> str | None:
     return val
 
 
+def _get_csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    val = os.getenv(name)
+    if val is None or val.strip() == "":
+        return default
+    parts = [x.strip() for x in val.split(",")]
+    return tuple(x for x in parts if x)
+
+
 @dataclass(frozen=True)
 class Settings:
     app_dir: Path = Path(__file__).resolve().parent
@@ -88,11 +96,15 @@ class Settings:
         str((Path(__file__).resolve().parent.parent / "fixed_deck.txt").as_posix()),
     )
 
-    cors_origins: tuple[str, ...] = (
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "https://28-superhuman-ui.vercel.app"
+    cors_origins: tuple[str, ...] = _get_csv(
+        "APP_CORS_ORIGINS",
+        (
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "https://28-superhuman-ui.vercel.app",
+        ),
     )
+    cors_origin_regex: str | None = _get_str_optional("APP_CORS_ORIGIN_REGEX")
 
 
 settings = Settings()

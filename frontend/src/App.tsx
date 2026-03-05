@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { http } from "./api/http";
 import { PLAYER_NAMES } from "./config/constants";
 import { GameRoomPage } from "./pages/GameRoomPage";
+import { MobileRedirectPage } from "./pages/MobileRedirectPage";
 import { RoomPage } from "./pages/RoomPage";
 import { StartGamePage } from "./pages/StartGamePage";
 import { TestPage } from "./pages/TestPage";
@@ -16,13 +17,42 @@ const SHOW_ARENA_TEST = false;
 const USE_OLD_ROOM_PAGE = false;
 // Set to true to use the NEW integrated GamePage (Step 5)
 const USE_NEW_GAME_PAGE = true;
+const MOBILE_UA_RE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
+
+function detectMobileClient(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const userAgent = window.navigator.userAgent || "";
+  const uaMobile = MOBILE_UA_RE.test(userAgent);
+  const smallViewport = window.matchMedia("(max-width: 900px)").matches;
+  const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+
+  return uaMobile || (smallViewport && coarsePointer);
+}
 
 export default function App() {
+  const [isMobileClient, setIsMobileClient] = useState<boolean>(() => detectMobileClient());
   const [hasStarted, setHasStarted] = useState(false);
   const [gameId, setGameId] = useState<string | null>(null);
   const [startingBidderIndex, setStartingBidderIndex] = useState(0);
   const [creatingGame, setCreatingGame] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const refreshDeviceClass = () => {
+      setIsMobileClient(detectMobileClient());
+    };
+
+    window.addEventListener("resize", refreshDeviceClass);
+    window.addEventListener("orientationchange", refreshDeviceClass);
+
+    return () => {
+      window.removeEventListener("resize", refreshDeviceClass);
+      window.removeEventListener("orientationchange", refreshDeviceClass);
+    };
+  }, []);
 
   const createGame = useCallback(async (starterSeat: number) => {
     setCreateError(null);
@@ -65,6 +95,10 @@ export default function App() {
   // For testing new Arena components (Step 2)
   if (SHOW_ARENA_TEST) {
     return <TestArenaPage />;
+  }
+
+  if (isMobileClient) {
+    return <MobileRedirectPage />;
   }
 
   if (!hasStarted) {
