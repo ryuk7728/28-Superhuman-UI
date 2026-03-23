@@ -26,6 +26,17 @@ elif _MINIMAX_BACKEND_REQUESTED == "rust":
 else:
     _MINIMAX_BACKEND_ACTIVE = "rust" if _RUST_MINIMAX_AVAILABLE else "python"
 
+
+def _normalize_backend_name(raw_backend: str | None) -> str:
+    if raw_backend is None:
+        return "auto"
+    value = raw_backend.strip().lower()
+    if value in ("py", "python"):
+        return "python"
+    if value == "rust":
+        return "rust"
+    return "auto"
+
 #Checks if all the cards is from the suit specified
 def allTrump(cards,suit):
         for card in cards:
@@ -801,55 +812,280 @@ def _player_to_payload(player):
     }
 
 
-def minimax_extended(s,first,secondary,trumpPlayed,currentCatch,trumpIndice,playerChance,players,currentSuit,trumpReveal,trumpSuit,chose,finalBid,playerTrump,reveal,reward_distribution,total,num,k,alpha=-math.inf,beta=math.inf):
-    if _MINIMAX_BACKEND_REQUESTED in ("python", "py"):
-        return _minimax_extended_python(s,first,secondary,trumpPlayed,currentCatch,trumpIndice,playerChance,players,currentSuit,trumpReveal,trumpSuit,chose,finalBid,playerTrump,reveal,reward_distribution,total,num,k,alpha,beta)
-
-    if _MINIMAX_BACKEND_REQUESTED == "rust" and not _RUST_MINIMAX_AVAILABLE:
-        raise RuntimeError(
-            "APP_MINIMAX_BACKEND=rust requested, but rl428_minimax_rust is not available"
-        )
-
+def _minimax_extended_rust(
+    s,
+    first,
+    secondary,
+    trumpPlayed,
+    currentCatch,
+    trumpIndice,
+    playerChance,
+    players,
+    currentSuit,
+    trumpReveal,
+    trumpSuit,
+    chose,
+    finalBid,
+    playerTrump,
+    reveal,
+    reward_distribution,
+    total,
+    num,
+    k,
+    alpha=-math.inf,
+    beta=math.inf,
+):
     if not _RUST_MINIMAX_AVAILABLE:
-        return _minimax_extended_python(s,first,secondary,trumpPlayed,currentCatch,trumpIndice,playerChance,players,currentSuit,trumpReveal,trumpSuit,chose,finalBid,playerTrump,reveal,reward_distribution,total,num,k,alpha,beta)
+        raise RuntimeError("Rust minimax backend unavailable (rl428_minimax_rust import failed).")
 
-    try:
-        payload = {
-            "s": [_card_to_payload(card) for card in s],
-            "first": bool(first),
-            "secondary": bool(secondary),
-            "trumpPlayed": bool(trumpPlayed),
-            "trumpIndice": [int(x) for x in trumpIndice],
-            "playerChance": int(playerChance),
-            "players": [_player_to_payload(player) for player in players],
-            "currentSuit": currentSuit,
-            "trumpReveal": bool(trumpReveal),
-            "trumpSuit": trumpSuit,
-            "chose": bool(chose),
-            "finalBid": int(finalBid),
-            "playerTrump": _card_to_payload(playerTrump),
-            "total": int(total),
-            "num": int(num),
-            "k": int(k),
-            "alpha": None if not math.isfinite(alpha) else float(alpha),
-            "beta": None if not math.isfinite(beta) else float(beta),
-        }
+    payload = {
+        "s": [_card_to_payload(card) for card in s],
+        "first": bool(first),
+        "secondary": bool(secondary),
+        "trumpPlayed": bool(trumpPlayed),
+        "trumpIndice": [int(x) for x in trumpIndice],
+        "playerChance": int(playerChance),
+        "players": [_player_to_payload(player) for player in players],
+        "currentSuit": currentSuit,
+        "trumpReveal": bool(trumpReveal),
+        "trumpSuit": trumpSuit,
+        "chose": bool(chose),
+        "finalBid": int(finalBid),
+        "playerTrump": _card_to_payload(playerTrump),
+        "total": int(total),
+        "num": int(num),
+        "k": int(k),
+        "alpha": None if not math.isfinite(alpha) else float(alpha),
+        "beta": None if not math.isfinite(beta) else float(beta),
+    }
 
-        result_json = _rl428_minimax_rust.minimax_extended_core(
-            json.dumps(payload, separators=(",", ":"))
+    result_json = _rl428_minimax_rust.minimax_extended_core(
+        json.dumps(payload, separators=(",", ":"))
+    )
+    parsed = json.loads(result_json)
+
+    reward_distribution.clear()
+    for entry in parsed.get("reward_distribution", []):
+        if entry.get("kind") == "bool":
+            reward_distribution.append(
+                (bool(entry.get("action")), int(entry.get("value", 0)))
+            )
+        else:
+            reward_distribution.append((entry.get("action"), int(entry.get("value", 0))))
+
+    return int(parsed["value"])
+
+
+def minimax_extended(
+    s,
+    first,
+    secondary,
+    trumpPlayed,
+    currentCatch,
+    trumpIndice,
+    playerChance,
+    players,
+    currentSuit,
+    trumpReveal,
+    trumpSuit,
+    chose,
+    finalBid,
+    playerTrump,
+    reveal,
+    reward_distribution,
+    total,
+    num,
+    k,
+    alpha=-math.inf,
+    beta=math.inf,
+    backend_override: str | None = None,
+):
+    backend = _normalize_backend_name(backend_override or _MINIMAX_BACKEND_REQUESTED)
+
+    if backend == "python":
+        return _minimax_extended_python(
+            s,
+            first,
+            secondary,
+            trumpPlayed,
+            currentCatch,
+            trumpIndice,
+            playerChance,
+            players,
+            currentSuit,
+            trumpReveal,
+            trumpSuit,
+            chose,
+            finalBid,
+            playerTrump,
+            reveal,
+            reward_distribution,
+            total,
+            num,
+            k,
+            alpha,
+            beta,
         )
-        parsed = json.loads(result_json)
 
-        reward_distribution.clear()
-        for entry in parsed.get("reward_distribution", []):
-            if entry.get("kind") == "bool":
-                reward_distribution.append((bool(entry.get("action")), int(entry.get("value", 0))))
-            else:
-                reward_distribution.append((entry.get("action"), int(entry.get("value", 0))))
+    if backend == "rust":
+        if not _RUST_MINIMAX_AVAILABLE:
+            if (
+                (backend_override is not None and backend_override.strip() != "")
+                or _normalize_backend_name(_MINIMAX_BACKEND_REQUESTED) == "rust"
+            ):
+                raise RuntimeError(
+                    "APP_MINIMAX_BACKEND=rust requested, but rl428_minimax_rust is not available"
+                )
+            return _minimax_extended_python(
+                s,
+                first,
+                secondary,
+                trumpPlayed,
+                currentCatch,
+                trumpIndice,
+                playerChance,
+                players,
+                currentSuit,
+                trumpReveal,
+                trumpSuit,
+                chose,
+                finalBid,
+                playerTrump,
+                reveal,
+                reward_distribution,
+                total,
+                num,
+                k,
+                alpha,
+                beta,
+            )
 
-        return int(parsed["value"])
-    except Exception:
-        return _minimax_extended_python(s,first,secondary,trumpPlayed,currentCatch,trumpIndice,playerChance,players,currentSuit,trumpReveal,trumpSuit,chose,finalBid,playerTrump,reveal,reward_distribution,total,num,k,alpha,beta)
+        # Explicit override should be strict; do not silently fall back.
+        if backend_override is not None and backend_override.strip() != "":
+            return _minimax_extended_rust(
+                s,
+                first,
+                secondary,
+                trumpPlayed,
+                currentCatch,
+                trumpIndice,
+                playerChance,
+                players,
+                currentSuit,
+                trumpReveal,
+                trumpSuit,
+                chose,
+                finalBid,
+                playerTrump,
+                reveal,
+                reward_distribution,
+                total,
+                num,
+                k,
+                alpha,
+                beta,
+            )
+        try:
+            return _minimax_extended_rust(
+                s,
+                first,
+                secondary,
+                trumpPlayed,
+                currentCatch,
+                trumpIndice,
+                playerChance,
+                players,
+                currentSuit,
+                trumpReveal,
+                trumpSuit,
+                chose,
+                finalBid,
+                playerTrump,
+                reveal,
+                reward_distribution,
+                total,
+                num,
+                k,
+                alpha,
+                beta,
+            )
+        except Exception:
+            return _minimax_extended_python(
+                s,
+                first,
+                secondary,
+                trumpPlayed,
+                currentCatch,
+                trumpIndice,
+                playerChance,
+                players,
+                currentSuit,
+                trumpReveal,
+                trumpSuit,
+                chose,
+                finalBid,
+                playerTrump,
+                reveal,
+                reward_distribution,
+                total,
+                num,
+                k,
+                alpha,
+                beta,
+            )
+
+    # auto mode
+    if _RUST_MINIMAX_AVAILABLE:
+        try:
+            return _minimax_extended_rust(
+                s,
+                first,
+                secondary,
+                trumpPlayed,
+                currentCatch,
+                trumpIndice,
+                playerChance,
+                players,
+                currentSuit,
+                trumpReveal,
+                trumpSuit,
+                chose,
+                finalBid,
+                playerTrump,
+                reveal,
+                reward_distribution,
+                total,
+                num,
+                k,
+                alpha,
+                beta,
+            )
+        except Exception:
+            pass
+
+    return _minimax_extended_python(
+        s,
+        first,
+        secondary,
+        trumpPlayed,
+        currentCatch,
+        trumpIndice,
+        playerChance,
+        players,
+        currentSuit,
+        trumpReveal,
+        trumpSuit,
+        chose,
+        finalBid,
+        playerTrump,
+        reveal,
+        reward_distribution,
+        total,
+        num,
+        k,
+        alpha,
+        beta,
+    )
 
 
 def minimax_extended_suboptimal(s, first, secondary, trumpPlayed, currentCatch, trumpIndice, 

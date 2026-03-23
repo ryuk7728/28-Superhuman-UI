@@ -4,7 +4,10 @@ import asyncio
 from concurrent.futures import ProcessPoolExecutor
 from typing import Callable, Any
 
-from app.bots.rollout_bot import choose_action_with_rollouts_parallel
+from app.bots.rollout_bot import (
+    choose_action_with_rollouts_parallel,
+    finalize_engine_compare_report_if_game_over,
+)
 from app.engine.play_engine import (
     apply_play_card,
     apply_reveal_choice,
@@ -36,7 +39,7 @@ async def advance_bots_until_human(
     while state.phase == "PLAY":
         actor = (state.leaderIndex + len(state.s)) % 4
         if actor not in BOT_SEATS:
-            return
+            break
 
         # Limit concurrent bot computations globally
         async with bot_sem:
@@ -60,3 +63,10 @@ async def advance_bots_until_human(
             await asyncio.sleep(EMPTY_TABLE_PAUSE_SECONDS)
         else:
             resolve_if_catch_complete(state)
+
+    report_path = finalize_engine_compare_report_if_game_over(state)
+    if report_path is not None:
+        try:
+            state.event_log.append(f"ENGINE_COMPARE_REPORT={report_path}")
+        except Exception:
+            pass

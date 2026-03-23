@@ -1,0 +1,634 @@
+{
+  "gameId": "559c62cd-abe8-4f89-820e-e4f07ea308a4",
+  "createdAtUtc": "2026-03-23T14:17:51.463306+00:00",
+  "settings": {
+    "rollouts": 500,
+    "workers": 12,
+    "timeoutSeconds": 60.0,
+    "microBatchSize": 10,
+    "rolloutBackend": "local",
+    "primaryBackend": "python"
+  },
+  "decisions": [
+    {
+      "decisionIndex": 1,
+      "phase": "PLAY",
+      "catchNumber": 1,
+      "trickLen": 0,
+      "actorSeat": 0,
+      "python": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 0,
+          "cardId": "Hearts_Nine"
+        },
+        "elapsedMs": 5389.1694999765605,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "rust": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 0,
+          "cardId": "Hearts_Nine"
+        },
+        "elapsedMs": 1253.9800000377,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "match": true,
+      "selectedBackend": "python",
+      "selectedAction": {
+        "type": "PLAY",
+        "seatIndex": 0,
+        "cardId": "Hearts_Nine"
+      }
+    },
+    {
+      "decisionIndex": 2,
+      "phase": "PLAY",
+      "catchNumber": 1,
+      "trickLen": 2,
+      "actorSeat": 2,
+      "python": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 2,
+          "cardId": "Hearts_Seven"
+        },
+        "elapsedMs": 664.6949999267235,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "rust": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 2,
+          "cardId": "Hearts_Seven"
+        },
+        "elapsedMs": 137.3174999607727,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "match": true,
+      "selectedBackend": "python",
+      "selectedAction": {
+        "type": "PLAY",
+        "seatIndex": 2,
+        "cardId": "Hearts_Seven"
+      }
+    },
+    {
+      "decisionIndex": 3,
+      "phase": "PLAY",
+      "catchNumber": 2,
+      "trickLen": 1,
+      "actorSeat": 0,
+      "python": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 0,
+          "cardId": "Clubs_Jack"
+        },
+        "elapsedMs": 1535.397500032559,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "rust": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 0,
+          "cardId": "Clubs_Jack"
+        },
+        "elapsedMs": 135.57610008865595,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "match": true,
+      "selectedBackend": "python",
+      "selectedAction": {
+        "type": "PLAY",
+        "seatIndex": 0,
+        "cardId": "Clubs_Jack"
+      }
+    },
+    {
+      "decisionIndex": 4,
+      "phase": "PLAY",
+      "catchNumber": 2,
+      "trickLen": 3,
+      "actorSeat": 2,
+      "python": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 2,
+          "cardId": "Clubs_Ace"
+        },
+        "elapsedMs": 302.9962999280542,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "rust": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 2,
+          "cardId": "Clubs_Ace"
+        },
+        "elapsedMs": 92.29770000092685,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "match": true,
+      "selectedBackend": "python",
+      "selectedAction": {
+        "type": "PLAY",
+        "seatIndex": 2,
+        "cardId": "Clubs_Ace"
+      }
+    },
+    {
+      "decisionIndex": 5,
+      "phase": "PLAY",
+      "catchNumber": 3,
+      "trickLen": 0,
+      "actorSeat": 0,
+      "python": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 0,
+          "cardId": "Spades_Queen"
+        },
+        "elapsedMs": 60004.197400063276,
+        "completedRollouts": 340,
+        "targetRollouts": 500,
+        "timedOut": true,
+        "error": null
+      },
+      "rust": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 0,
+          "cardId": "Spades_Queen"
+        },
+        "elapsedMs": 3714.011799893342,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "match": true,
+      "selectedBackend": "python",
+      "selectedAction": {
+        "type": "PLAY",
+        "seatIndex": 0,
+        "cardId": "Spades_Queen"
+      }
+    },
+    {
+      "decisionIndex": 6,
+      "phase": "PLAY",
+      "catchNumber": 3,
+      "trickLen": 2,
+      "actorSeat": 2,
+      "python": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 2,
+          "cardId": "Spades_Eight"
+        },
+        "elapsedMs": 11980.150500079617,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "rust": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 2,
+          "cardId": "Spades_Eight"
+        },
+        "elapsedMs": 1379.2657000012696,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "match": true,
+      "selectedBackend": "python",
+      "selectedAction": {
+        "type": "PLAY",
+        "seatIndex": 2,
+        "cardId": "Spades_Eight"
+      }
+    },
+    {
+      "decisionIndex": 7,
+      "phase": "PLAY",
+      "catchNumber": 4,
+      "trickLen": 1,
+      "actorSeat": 2,
+      "python": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 2,
+          "cardId": "Spades_Nine"
+        },
+        "elapsedMs": 16370.522000011988,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "rust": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 2,
+          "cardId": "Spades_Nine"
+        },
+        "elapsedMs": 755.482800072059,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "match": true,
+      "selectedBackend": "python",
+      "selectedAction": {
+        "type": "PLAY",
+        "seatIndex": 2,
+        "cardId": "Spades_Nine"
+      }
+    },
+    {
+      "decisionIndex": 8,
+      "phase": "PLAY",
+      "catchNumber": 4,
+      "trickLen": 3,
+      "actorSeat": 0,
+      "python": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 0,
+          "cardId": "Spades_Ten"
+        },
+        "elapsedMs": 1911.8510000407696,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "rust": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 0,
+          "cardId": "Spades_Ten"
+        },
+        "elapsedMs": 147.17019989620894,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "match": true,
+      "selectedBackend": "python",
+      "selectedAction": {
+        "type": "PLAY",
+        "seatIndex": 0,
+        "cardId": "Spades_Ten"
+      }
+    },
+    {
+      "decisionIndex": 9,
+      "phase": "PLAY",
+      "catchNumber": 5,
+      "trickLen": 0,
+      "actorSeat": 2,
+      "python": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 2,
+          "cardId": "Hearts_Eight"
+        },
+        "elapsedMs": 45127.035999903455,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "rust": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 2,
+          "cardId": "Hearts_Eight"
+        },
+        "elapsedMs": 764.8367000510916,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "match": true,
+      "selectedBackend": "python",
+      "selectedAction": {
+        "type": "PLAY",
+        "seatIndex": 2,
+        "cardId": "Hearts_Eight"
+      }
+    },
+    {
+      "decisionIndex": 10,
+      "phase": "PLAY",
+      "catchNumber": 5,
+      "trickLen": 2,
+      "actorSeat": 0,
+      "python": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 0,
+          "cardId": "Clubs_Ten"
+        },
+        "elapsedMs": 13051.985999918543,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "rust": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 0,
+          "cardId": "Clubs_Ten"
+        },
+        "elapsedMs": 314.7177000064403,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "match": true,
+      "selectedBackend": "python",
+      "selectedAction": {
+        "type": "PLAY",
+        "seatIndex": 0,
+        "cardId": "Clubs_Ten"
+      }
+    },
+    {
+      "decisionIndex": 11,
+      "phase": "PLAY",
+      "catchNumber": 6,
+      "trickLen": 0,
+      "actorSeat": 0,
+      "python": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 0,
+          "cardId": "Clubs_Queen"
+        },
+        "elapsedMs": 2332.208800013177,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "rust": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 0,
+          "cardId": "Clubs_Queen"
+        },
+        "elapsedMs": 93.5235999058932,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "match": true,
+      "selectedBackend": "python",
+      "selectedAction": {
+        "type": "PLAY",
+        "seatIndex": 0,
+        "cardId": "Clubs_Queen"
+      }
+    },
+    {
+      "decisionIndex": 12,
+      "phase": "PLAY",
+      "catchNumber": 6,
+      "trickLen": 2,
+      "actorSeat": 2,
+      "python": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 2,
+          "cardId": "Clubs_King"
+        },
+        "elapsedMs": 572.2011999459937,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "rust": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 2,
+          "cardId": "Clubs_King"
+        },
+        "elapsedMs": 78.05580005515367,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "match": true,
+      "selectedBackend": "python",
+      "selectedAction": {
+        "type": "PLAY",
+        "seatIndex": 2,
+        "cardId": "Clubs_King"
+      }
+    },
+    {
+      "decisionIndex": 13,
+      "phase": "PLAY",
+      "catchNumber": 7,
+      "trickLen": 1,
+      "actorSeat": 2,
+      "python": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 2,
+          "cardId": "Diamonds_King"
+        },
+        "elapsedMs": 180.93300005421042,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "rust": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 2,
+          "cardId": "Diamonds_King"
+        },
+        "elapsedMs": 125.96540001686662,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "match": true,
+      "selectedBackend": "python",
+      "selectedAction": {
+        "type": "PLAY",
+        "seatIndex": 2,
+        "cardId": "Diamonds_King"
+      }
+    },
+    {
+      "decisionIndex": 14,
+      "phase": "PLAY",
+      "catchNumber": 7,
+      "trickLen": 3,
+      "actorSeat": 0,
+      "python": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 0,
+          "cardId": "Diamonds_Eight"
+        },
+        "elapsedMs": 180.17049995251,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "rust": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 0,
+          "cardId": "Diamonds_Eight"
+        },
+        "elapsedMs": 152.95270003844053,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "match": true,
+      "selectedBackend": "python",
+      "selectedAction": {
+        "type": "PLAY",
+        "seatIndex": 0,
+        "cardId": "Diamonds_Eight"
+      }
+    },
+    {
+      "decisionIndex": 15,
+      "phase": "PLAY",
+      "catchNumber": 8,
+      "trickLen": 1,
+      "actorSeat": 2,
+      "python": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 2,
+          "cardId": "Diamonds_Queen"
+        },
+        "elapsedMs": 148.80220009945333,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "rust": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 2,
+          "cardId": "Diamonds_Queen"
+        },
+        "elapsedMs": 147.75010000448674,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "match": true,
+      "selectedBackend": "python",
+      "selectedAction": {
+        "type": "PLAY",
+        "seatIndex": 2,
+        "cardId": "Diamonds_Queen"
+      }
+    },
+    {
+      "decisionIndex": 16,
+      "phase": "PLAY",
+      "catchNumber": 8,
+      "trickLen": 3,
+      "actorSeat": 0,
+      "python": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 0,
+          "cardId": "Diamonds_Ace"
+        },
+        "elapsedMs": 167.58630005642772,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "rust": {
+        "action": {
+          "type": "PLAY",
+          "seatIndex": 0,
+          "cardId": "Diamonds_Ace"
+        },
+        "elapsedMs": 167.31819999404252,
+        "completedRollouts": 500,
+        "targetRollouts": 500,
+        "timedOut": false,
+        "error": null
+      },
+      "match": true,
+      "selectedBackend": "python",
+      "selectedAction": {
+        "type": "PLAY",
+        "seatIndex": 0,
+        "cardId": "Diamonds_Ace"
+      }
+    }
+  ],
+  "finishedAtUtc": "2026-03-23T14:22:05.548437+00:00",
+  "result": {
+    "winnerTeam": 2,
+    "team1Points": 10,
+    "team2Points": 18,
+    "totalDecisions": 16,
+    "matches": 16,
+    "mismatches": 0,
+    "totalPythonMs": 159919.90320000332,
+    "totalRustMs": 9460.22200002335,
+    "speedupPythonOverRust": 16.9044556459255
+  }
+}

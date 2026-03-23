@@ -79,6 +79,15 @@ class Settings:
     # 0 means auto-size.
     rollout_micro_batch_size: int = _get_int("APP_ROLLOUT_MICRO_BATCH_SIZE", 0)
 
+    # Engine compare mode (Python vs Rust) for live orchestration-level benchmarking.
+    engine_compare_enabled: bool = _get_bool("APP_ENGINE_COMPARE_ENABLED", False)
+    engine_compare_primary_backend: str = _get_str(
+        "APP_ENGINE_COMPARE_PRIMARY_BACKEND", "python"
+    ).strip().lower()
+    engine_compare_report_dir: str = _get_str(
+        "APP_ENGINE_COMPARE_REPORT_DIR", ""
+    ).strip()
+
     # Rollout backend (local or ray)
     rollout_backend: str = _get_str("APP_ROLLOUT_BACKEND", "local").strip().lower()
     ray_address: str | None = _get_str_optional("RAY_ADDRESS") or _get_str_optional(

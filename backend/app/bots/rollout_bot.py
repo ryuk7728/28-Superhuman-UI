@@ -10,6 +10,7 @@ import random
 import threading
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
+from datetime import datetime, timezone
 from typing import Any
 
 from app.engine.cards_adapter import from_card_id, to_card_id
@@ -30,6 +31,10 @@ _ray_rollout_remote = None
 _rollout_metrics_lock = threading.Lock()
 _rollout_metrics_count = 0
 _rollout_metrics_last_ts: float | None = None
+
+_engine_compare_reports_lock = threading.Lock()
+_engine_compare_reports: dict[str, dict[str, Any]] = {}
+_engine_compare_reports_written: set[str] = set()
 
 
 def _record_rollouts(n: int) -> None:
@@ -116,6 +121,37 @@ def _dump_dir_backend_root() -> Path:
     dump_dir = backend_root / "rollout_crash_dumps"
     dump_dir.mkdir(parents=True, exist_ok=True)
     return dump_dir
+
+
+def _engine_compare_report_dir() -> Path:
+    backend_root = Path(__file__).resolve().parents[2]
+    configured = settings.engine_compare_report_dir.strip()
+    if configured:
+        path = Path(configured)
+        if not path.is_absolute():
+            path = backend_root / path
+    else:
+        path = backend_root / "engine_compare_reports"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _serialize_action(action_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if action_type == "REVEAL":
+        return {
+            "type": "REVEAL",
+            "seatIndex": int(payload.get("seatIndex", -1)),
+            "reveal": bool(payload.get("reveal")),
+        }
+    return {
+        "type": "PLAY",
+        "seatIndex": int(payload.get("seatIndex", -1)),
+        "cardId": str(payload.get("cardId")),
+    }
 
 
 def _safe_card_id(x):
@@ -236,6 +272,7 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
     leaderIndex: int = snapshot["leaderIndex"]
     catchNumber: int = snapshot["catchNumber"]
     k: int = snapshot["k"]
+    backend_override = snapshot.get("engineBackendOverride")
 
     trumpReveal: bool = snapshot["trumpReveal"]
     chose: bool = snapshot["chose"]
@@ -579,6 +616,7 @@ def rollout_worker(snapshot: dict[str, Any], n: int, seed: int) -> dict[Any, int
                 0,
                 0,
                 k,
+                backend_override=backend_override,
             )
         except Exception as e:
             if dump_enabled:
@@ -726,6 +764,225 @@ async def choose_action_with_rollouts_parallel(
     """
     from app.engine.play_engine import compute_play_legal_actions
 
+    def _fallback_action() -> tuple[str, dict[str, Any]]:
+        if legal.type == "REVEAL_CHOICE":
+            return ("REVEAL", {"seatIndex": bot_seat, "reveal": False})
+        return ("PLAY", {"seatIndex": bot_seat, "cardId": legal.cardIds[0]})
+
+    def _choose_action_from_merged(merged: Counter) -> tuple[str, dict[str, Any]]:
+        if not merged:
+            return _fallback_action()
+
+        best_action, _ = merged.most_common(1)[0]
+
+        if isinstance(best_action, bool):
+            return ("REVEAL", {"seatIndex": bot_seat, "reveal": bool(best_action)})
+
+        if isinstance(best_action, str):
+            if legal.type != "PLAY_CARD" or not legal.cardIds:
+                return ("REVEAL", {"seatIndex": bot_seat, "reveal": False})
+
+            for cid in legal.cardIds:
+                if from_card_id(cid).identity() == best_action:
+                    return ("PLAY", {"seatIndex": bot_seat, "cardId": cid})
+
+            return ("PLAY", {"seatIndex": bot_seat, "cardId": legal.cardIds[0]})
+
+        return _fallback_action()
+
+    async def _run_backend_decision(
+        *,
+        backend_name: str | None,
+        local_snapshot: dict[str, Any],
+        local_batch_sizes: list[int],
+        local_batch_seeds: list[int],
+        local_worker_count: int,
+    ) -> dict[str, Any]:
+        run_snapshot = dict(local_snapshot)
+        if backend_name is None:
+            run_snapshot.pop("engineBackendOverride", None)
+        else:
+            run_snapshot["engineBackendOverride"] = backend_name
+
+        timeout_seconds = max(0.0, float(settings.bot_think_timeout_seconds))
+        timeout_enabled = timeout_seconds > 0.0
+        total_rollouts_target = sum(local_batch_sizes)
+        completed_rollouts = 0
+        use_ray = settings.rollout_backend == "ray"
+        results: list[dict[Any, int]] = []
+        started = time.perf_counter()
+
+        try:
+            if use_ray:
+                ray, remote_fn = _get_ray_rollout_remote()
+                if not timeout_enabled:
+                    refs = []
+                    for n, seed in zip(local_batch_sizes, local_batch_seeds):
+                        refs.append(remote_fn.remote(run_snapshot, n, seed))
+                    results = await asyncio.to_thread(ray.get, refs)
+                    completed_rollouts = total_rollouts_target
+                else:
+                    deadline = time.monotonic() + timeout_seconds
+                    next_batch_idx = 0
+                    in_flight: dict[Any, int] = {}
+
+                    def _submit_one() -> bool:
+                        nonlocal next_batch_idx
+                        if next_batch_idx >= len(local_batch_sizes):
+                            return False
+                        n = local_batch_sizes[next_batch_idx]
+                        seed = local_batch_seeds[next_batch_idx]
+                        next_batch_idx += 1
+                        ref = remote_fn.remote(run_snapshot, n, seed)
+                        in_flight[ref] = n
+                        return True
+
+                    for _ in range(min(local_worker_count, len(local_batch_sizes))):
+                        if not _submit_one():
+                            break
+
+                    while in_flight:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            break
+
+                        ready_refs, _ = await asyncio.to_thread(
+                            ray.wait,
+                            list(in_flight.keys()),
+                            1,
+                            remaining,
+                        )
+                        if not ready_refs:
+                            break
+
+                        for ref in ready_refs:
+                            n = in_flight.pop(ref, 0)
+                            res = await asyncio.to_thread(ray.get, ref)
+                            results.append(res)
+                            completed_rollouts += n
+                            _submit_one()
+
+                    for ref in list(in_flight.keys()):
+                        try:
+                            await asyncio.to_thread(ray.cancel, ref, False)
+                        except Exception:
+                            pass
+            else:
+                loop = asyncio.get_running_loop()
+                if not timeout_enabled:
+                    tasks = []
+                    for n, seed in zip(local_batch_sizes, local_batch_seeds):
+                        fut = pool.submit(rollout_worker, run_snapshot, n, seed)
+                        tasks.append(asyncio.wrap_future(fut, loop=loop))
+                    results = await asyncio.gather(*tasks)
+                    completed_rollouts = total_rollouts_target
+                else:
+                    deadline = time.monotonic() + timeout_seconds
+                    next_batch_idx = 0
+                    in_flight: dict[asyncio.Future, tuple[Any, int]] = {}
+
+                    def _submit_one() -> bool:
+                        nonlocal next_batch_idx
+                        if next_batch_idx >= len(local_batch_sizes):
+                            return False
+                        n = local_batch_sizes[next_batch_idx]
+                        seed = local_batch_seeds[next_batch_idx]
+                        next_batch_idx += 1
+                        cfut = pool.submit(rollout_worker, run_snapshot, n, seed)
+                        afut = asyncio.wrap_future(cfut, loop=loop)
+                        in_flight[afut] = (cfut, n)
+                        return True
+
+                    for _ in range(min(local_worker_count, len(local_batch_sizes))):
+                        if not _submit_one():
+                            break
+
+                    while in_flight:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            break
+
+                        done, _ = await asyncio.wait(
+                            set(in_flight.keys()),
+                            timeout=remaining,
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        if not done:
+                            break
+
+                        for afut in done:
+                            _cfut, n = in_flight.pop(afut)
+                            res = afut.result()
+                            results.append(res)
+                            completed_rollouts += n
+                            _submit_one()
+
+                    for _afut, (cfut, _n) in list(in_flight.items()):
+                        try:
+                            cfut.cancel()
+                        except Exception:
+                            pass
+        except Exception as e:
+            msg = str(e)
+            if "ROLL_OUT_CRASH_DUMP=" in msg:
+                dump_path = msg.split("ROLL_OUT_CRASH_DUMP=", 1)[1].strip()
+                try:
+                    state.event_log.append(f"BOT CRASH DUMP: {dump_path}")
+                except Exception:
+                    pass
+                print("BOT CRASH DUMP:", dump_path)
+            else:
+                print(
+                    f"Bot rollout crashed (backend={backend_name or 'default'}):",
+                    repr(e),
+                )
+
+            fallback_type, fallback_payload = _fallback_action()
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            return {
+                "backend": backend_name or "default",
+                "action_type": fallback_type,
+                "payload": fallback_payload,
+                "completed_rollouts": completed_rollouts,
+                "elapsed_ms": elapsed_ms,
+                "error": msg,
+                "timed_out": False,
+                "target_rollouts": total_rollouts_target,
+            }
+
+        timed_out = timeout_enabled and completed_rollouts < total_rollouts_target
+        if timed_out:
+            timeout_msg = (
+                f"Bot think timeout hit ({backend_name or 'default'}): "
+                f"used {completed_rollouts}/{total_rollouts_target} rollouts "
+                f"in {timeout_seconds:.2f}s."
+            )
+            print(timeout_msg)
+            try:
+                state.event_log.append(timeout_msg)
+            except Exception:
+                pass
+
+        if completed_rollouts > 0:
+            _record_rollouts(completed_rollouts)
+
+        merged: Counter = Counter()
+        for d in results:
+            merged.update(d)
+
+        action_type, payload = _choose_action_from_merged(merged)
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        return {
+            "backend": backend_name or "default",
+            "action_type": action_type,
+            "payload": payload,
+            "completed_rollouts": completed_rollouts,
+            "elapsed_ms": elapsed_ms,
+            "error": None,
+            "timed_out": timed_out,
+            "target_rollouts": total_rollouts_target,
+        }
+
     legal = compute_play_legal_actions(state)
     if legal.type == "NO_ACTION":
         raise RuntimeError("Bot has no legal action.")
@@ -734,8 +991,99 @@ async def choose_action_with_rollouts_parallel(
     worker_count = max(1, min(int(settings.workers), total_rollouts))
     timeout_seconds = max(0.0, float(settings.bot_think_timeout_seconds))
     timeout_enabled = timeout_seconds > 0.0
-
+    use_ray = settings.rollout_backend == "ray"
     snapshot = _build_snapshot(state, bot_seat)
+
+    if settings.engine_compare_enabled and use_ray:
+        warn_msg = "Engine compare mode currently supports APP_ROLLOUT_BACKEND=local only."
+        print(warn_msg)
+        try:
+            state.event_log.append(warn_msg)
+        except Exception:
+            pass
+
+    compare_enabled = settings.engine_compare_enabled and not use_ray
+
+    if compare_enabled:
+        compare_worker_count = max(1, worker_count // 2)
+        batch_sizes = _build_rollout_batch_sizes(
+            total_rollouts=total_rollouts,
+            worker_count=compare_worker_count,
+            timeout_enabled=timeout_enabled,
+            micro_batch_size=max(0, int(settings.rollout_micro_batch_size)),
+        )
+        shared_seeds = [_seed_entropy() for _ in batch_sizes]
+
+        python_task = _run_backend_decision(
+            backend_name="python",
+            local_snapshot=snapshot,
+            local_batch_sizes=batch_sizes,
+            local_batch_seeds=shared_seeds,
+            local_worker_count=compare_worker_count,
+        )
+        rust_task = _run_backend_decision(
+            backend_name="rust",
+            local_snapshot=snapshot,
+            local_batch_sizes=batch_sizes,
+            local_batch_seeds=shared_seeds,
+            local_worker_count=compare_worker_count,
+        )
+        python_result, rust_result = await asyncio.gather(python_task, rust_task)
+
+        primary_backend = settings.engine_compare_primary_backend
+        if primary_backend not in ("python", "rust"):
+            primary_backend = "python"
+
+        selected = python_result if primary_backend == "python" else rust_result
+
+        py_action = _serialize_action(
+            python_result["action_type"], python_result["payload"]
+        )
+        rs_action = _serialize_action(rust_result["action_type"], rust_result["payload"])
+        match = py_action == rs_action
+
+        report_entry = {
+            "decisionIndex": 0,  # assigned on append
+            "phase": state.phase,
+            "catchNumber": state.catchNumber,
+            "trickLen": len(state.s),
+            "actorSeat": bot_seat,
+            "python": {
+                "action": py_action,
+                "elapsedMs": python_result["elapsed_ms"],
+                "completedRollouts": python_result["completed_rollouts"],
+                "targetRollouts": python_result["target_rollouts"],
+                "timedOut": python_result["timed_out"],
+                "error": python_result["error"],
+            },
+            "rust": {
+                "action": rs_action,
+                "elapsedMs": rust_result["elapsed_ms"],
+                "completedRollouts": rust_result["completed_rollouts"],
+                "targetRollouts": rust_result["target_rollouts"],
+                "timedOut": rust_result["timed_out"],
+                "error": rust_result["error"],
+            },
+            "match": match,
+            "selectedBackend": primary_backend,
+            "selectedAction": _serialize_action(
+                selected["action_type"], selected["payload"]
+            ),
+        }
+        _append_engine_compare_decision(state, report_entry)
+
+        if not match:
+            mismatch_msg = (
+                f"ENGINE_COMPARE_MISMATCH catch={state.catchNumber} seat={bot_seat}: "
+                f"python={py_action} rust={rs_action}"
+            )
+            print(mismatch_msg)
+            try:
+                state.event_log.append(mismatch_msg)
+            except Exception:
+                pass
+
+        return (selected["action_type"], selected["payload"])
 
     batch_sizes = _build_rollout_batch_sizes(
         total_rollouts=total_rollouts,
@@ -743,182 +1091,88 @@ async def choose_action_with_rollouts_parallel(
         timeout_enabled=timeout_enabled,
         micro_batch_size=max(0, int(settings.rollout_micro_batch_size)),
     )
+    seeds = [_seed_entropy() for _ in batch_sizes]
+    result = await _run_backend_decision(
+        backend_name=None,
+        local_snapshot=snapshot,
+        local_batch_sizes=batch_sizes,
+        local_batch_seeds=seeds,
+        local_worker_count=worker_count,
+    )
+    return (result["action_type"], result["payload"])
 
-    use_ray = settings.rollout_backend == "ray"
-    completed_rollouts = 0
 
-    try:
-        if use_ray:
-            ray, remote_fn = _get_ray_rollout_remote()
-            if not timeout_enabled:
-                refs = []
-                for n in batch_sizes:
-                    seed = _seed_entropy()
-                    refs.append(remote_fn.remote(snapshot, n, seed))
-                results = await asyncio.to_thread(ray.get, refs)
-                completed_rollouts = sum(batch_sizes)
-            else:
-                results = []
-                deadline = time.monotonic() + timeout_seconds
+def _append_engine_compare_decision(state, entry: dict[str, Any]) -> None:
+    game_id = getattr(state, "game_id", None)
+    if not game_id:
+        return
 
-                next_batch_idx = 0
-                in_flight: dict[Any, int] = {}
+    with _engine_compare_reports_lock:
+        report = _engine_compare_reports.get(game_id)
+        if report is None:
+            report = {
+                "gameId": game_id,
+                "createdAtUtc": _utc_now_iso(),
+                "settings": {
+                    "rollouts": int(settings.rollouts),
+                    "workers": int(settings.workers),
+                    "timeoutSeconds": float(settings.bot_think_timeout_seconds),
+                    "microBatchSize": int(settings.rollout_micro_batch_size),
+                    "rolloutBackend": settings.rollout_backend,
+                    "primaryBackend": settings.engine_compare_primary_backend,
+                },
+                "decisions": [],
+            }
+            _engine_compare_reports[game_id] = report
 
-                def _submit_one() -> bool:
-                    nonlocal next_batch_idx
-                    if next_batch_idx >= len(batch_sizes):
-                        return False
-                    n = batch_sizes[next_batch_idx]
-                    next_batch_idx += 1
-                    seed = _seed_entropy()
-                    ref = remote_fn.remote(snapshot, n, seed)
-                    in_flight[ref] = n
-                    return True
+        entry["decisionIndex"] = len(report["decisions"]) + 1
+        report["decisions"].append(entry)
 
-                for _ in range(min(worker_count, len(batch_sizes))):
-                    if not _submit_one():
-                        break
 
-                while in_flight:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        break
+def finalize_engine_compare_report_if_game_over(state) -> Path | None:
+    if not settings.engine_compare_enabled:
+        return None
+    if getattr(state, "phase", None) != "GAME_OVER":
+        return None
 
-                    ready_refs, _ = await asyncio.to_thread(
-                        ray.wait,
-                        list(in_flight.keys()),
-                        1,
-                        remaining,
-                    )
-                    if not ready_refs:
-                        break
+    game_id = getattr(state, "game_id", None)
+    if not game_id:
+        return None
 
-                    for ref in ready_refs:
-                        n = in_flight.pop(ref, 0)
-                        res = await asyncio.to_thread(ray.get, ref)
-                        results.append(res)
-                        completed_rollouts += n
-                        _submit_one()
+    with _engine_compare_reports_lock:
+        if game_id in _engine_compare_reports_written:
+            return None
+        report = _engine_compare_reports.pop(game_id, None)
+        if report is None:
+            return None
+        _engine_compare_reports_written.add(game_id)
 
-                for ref in list(in_flight.keys()):
-                    try:
-                        await asyncio.to_thread(ray.cancel, ref, False)
-                    except Exception:
-                        pass
-        else:
-            loop = asyncio.get_running_loop()
-            if not timeout_enabled:
-                tasks = []
-                for n in batch_sizes:
-                    seed = _seed_entropy()
-                    fut = pool.submit(rollout_worker, snapshot, n, seed)
-                    tasks.append(asyncio.wrap_future(fut, loop=loop))
-                results = await asyncio.gather(*tasks)
-                completed_rollouts = sum(batch_sizes)
-            else:
-                results = []
-                deadline = time.monotonic() + timeout_seconds
+    python_ms = sum(
+        float(entry.get("python", {}).get("elapsedMs", 0.0))
+        for entry in report["decisions"]
+    )
+    rust_ms = sum(
+        float(entry.get("rust", {}).get("elapsedMs", 0.0))
+        for entry in report["decisions"]
+    )
+    matches = sum(1 for entry in report["decisions"] if bool(entry.get("match")))
+    mismatches = len(report["decisions"]) - matches
 
-                next_batch_idx = 0
-                in_flight: dict[asyncio.Future, tuple[Any, int]] = {}
+    report["finishedAtUtc"] = _utc_now_iso()
+    report["result"] = {
+        "winnerTeam": getattr(state, "winnerTeam", None),
+        "team1Points": getattr(state, "team1Points", None),
+        "team2Points": getattr(state, "team2Points", None),
+        "totalDecisions": len(report["decisions"]),
+        "matches": matches,
+        "mismatches": mismatches,
+        "totalPythonMs": python_ms,
+        "totalRustMs": rust_ms,
+        "speedupPythonOverRust": (python_ms / rust_ms) if rust_ms > 0 else None,
+    }
 
-                def _submit_one() -> bool:
-                    nonlocal next_batch_idx
-                    if next_batch_idx >= len(batch_sizes):
-                        return False
-                    n = batch_sizes[next_batch_idx]
-                    next_batch_idx += 1
-                    seed = _seed_entropy()
-                    cfut = pool.submit(rollout_worker, snapshot, n, seed)
-                    afut = asyncio.wrap_future(cfut, loop=loop)
-                    in_flight[afut] = (cfut, n)
-                    return True
-
-                for _ in range(min(worker_count, len(batch_sizes))):
-                    if not _submit_one():
-                        break
-
-                while in_flight:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        break
-
-                    done, _ = await asyncio.wait(
-                        set(in_flight.keys()),
-                        timeout=remaining,
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    if not done:
-                        break
-
-                    for afut in done:
-                        _cfut, n = in_flight.pop(afut)
-                        res = afut.result()
-                        results.append(res)
-                        completed_rollouts += n
-                        _submit_one()
-
-                for _afut, (cfut, _n) in list(in_flight.items()):
-                    try:
-                        cfut.cancel()
-                    except Exception:
-                        pass
-    except Exception as e:
-        msg = str(e)
-        if "ROLL_OUT_CRASH_DUMP=" in msg:
-            dump_path = msg.split("ROLL_OUT_CRASH_DUMP=", 1)[1].strip()
-            try:
-                state.event_log.append(f"BOT CRASH DUMP: {dump_path}")
-            except Exception:
-                pass
-            print("BOT CRASH DUMP:", dump_path)
-        else:
-            print("Bot rollout crashed:", repr(e))
-
-        if legal.type == "REVEAL_CHOICE":
-            return ("REVEAL", {"seatIndex": bot_seat, "reveal": False})
-        return ("PLAY", {"seatIndex": bot_seat, "cardId": legal.cardIds[0]})
-
-    if timeout_enabled and completed_rollouts < total_rollouts:
-        timeout_msg = (
-            f"Bot think timeout hit: used {completed_rollouts}/{total_rollouts} rollouts "
-            f"in {timeout_seconds:.2f}s."
-        )
-        print(timeout_msg)
-        try:
-            state.event_log.append(timeout_msg)
-        except Exception:
-            pass
-
-    if completed_rollouts > 0:
-        _record_rollouts(completed_rollouts)
-
-    merged: Counter = Counter()
-    for d in results:
-        merged.update(d)
-
-    if not merged:
-        if legal.type == "REVEAL_CHOICE":
-            return ("REVEAL", {"seatIndex": bot_seat, "reveal": False})
-        return ("PLAY", {"seatIndex": bot_seat, "cardId": legal.cardIds[0]})
-
-    best_action, _ = merged.most_common(1)[0]
-
-    # bool => reveal choice
-    if isinstance(best_action, bool):
-        return ("REVEAL", {"seatIndex": bot_seat, "reveal": bool(best_action)})
-
-    # string => card identity
-    if isinstance(best_action, str):
-        if legal.type != "PLAY_CARD" or not legal.cardIds:
-            return ("REVEAL", {"seatIndex": bot_seat, "reveal": False})
-
-        for cid in legal.cardIds:
-            if from_card_id(cid).identity() == best_action:
-                return ("PLAY", {"seatIndex": bot_seat, "cardId": cid})
-
-        return ("PLAY", {"seatIndex": bot_seat, "cardId": legal.cardIds[0]})
-
-    if legal.type == "REVEAL_CHOICE":
-        return ("REVEAL", {"seatIndex": bot_seat, "reveal": False})
-    return ("PLAY", {"seatIndex": bot_seat, "cardId": legal.cardIds[0]})
+    safe_game = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in game_id)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out_path = _engine_compare_report_dir() / f"engine_compare_{safe_game}_{ts}.json"
+    out_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return out_path
