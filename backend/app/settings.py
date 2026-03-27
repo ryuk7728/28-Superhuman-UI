@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import os
 from pathlib import Path
 
@@ -59,6 +59,40 @@ def _get_csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(x for x in parts if x)
 
 
+def _get_k_by_catch_map(name: str) -> dict[int, int]:
+    """
+    Parse per-trick k mapping from env.
+    Format:
+      APP_K_BY_CATCH=1:2,2:2,3:3,4:4,5:4,6:3,7:2,8:1
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return {}
+
+    out: dict[int, int] = {}
+    for item in raw.replace(";", ",").split(","):
+        part = item.strip()
+        if not part:
+            continue
+        if ":" not in part:
+            raise ValueError(
+                f"Invalid {name} entry '{part}'. Expected format catch:k (e.g. 5:4)."
+            )
+        left, right = part.split(":", 1)
+        catch_num = int(left.strip())
+        k_val = int(right.strip())
+        if catch_num < 1 or catch_num > 8:
+            raise ValueError(
+                f"Invalid {name} catch '{catch_num}'. Catch number must be in [1, 8]."
+            )
+        if k_val < 1:
+            raise ValueError(
+                f"Invalid {name} k '{k_val}' for catch {catch_num}. k must be >= 1."
+            )
+        out[catch_num] = k_val
+    return out
+
+
 @dataclass(frozen=True)
 class Settings:
     app_dir: Path = Path(__file__).resolve().parent
@@ -88,6 +122,9 @@ class Settings:
 
     # k control
     k_override: int | None = _get_int_optional("APP_K_OVERRIDE")
+    k_by_catch: dict[int, int] = field(
+        default_factory=lambda: _get_k_by_catch_map("APP_K_BY_CATCH")
+    )
 
     # Fixed-deck mode (for deterministic reproduction)
     fixed_deck_enabled: bool = _get_bool("APP_FIXED_DECK_ENABLED", False)
