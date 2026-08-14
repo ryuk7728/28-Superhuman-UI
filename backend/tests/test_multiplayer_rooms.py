@@ -236,6 +236,156 @@ def test_room_chat_history_is_isolated_between_rooms() -> None:
             }
 
 
+def test_room_voice_signaling_is_authenticated_and_peer_to_peer() -> None:
+    with TestClient(app) as client:
+        alice = client.post("/rooms", json={"playerName": "Alice"}).json()
+        bob = client.post(
+            "/rooms/join",
+            json={"roomCode": alice["roomCode"], "playerName": "Bob"},
+        ).json()
+        room = alice["roomCode"]
+
+        with client.websocket_connect(
+            f"/ws/rooms/{room}/voice?token={alice['playerToken']}"
+        ) as ws_a, client.websocket_connect(
+            f"/ws/rooms/{room}/voice?token={bob['playerToken']}"
+        ) as ws_b:
+            assert ws_a.receive_json() == {
+                "type": "VOICE_STATE",
+                "activeSeatIndices": [],
+            }
+            assert ws_b.receive_json() == {
+                "type": "VOICE_STATE",
+                "activeSeatIndices": [],
+            }
+
+            ws_a.send_json({"type": "VOICE_JOIN"})
+            expected_one = {
+                "type": "VOICE_STATE",
+                "activeSeatIndices": [alice["seatIndex"]],
+            }
+            assert ws_a.receive_json() == expected_one
+            assert ws_b.receive_json() == expected_one
+
+            ws_b.send_json({"type": "VOICE_JOIN"})
+            expected_both = {
+                "type": "VOICE_STATE",
+                "activeSeatIndices": sorted(
+                    [alice["seatIndex"], bob["seatIndex"]]
+                ),
+            }
+            assert ws_a.receive_json() == expected_both
+            assert ws_b.receive_json() == expected_both
+
+            initiator_ws = ws_a if alice["seatIndex"] < bob["seatIndex"] else ws_b
+            responder_ws = ws_b if initiator_ws is ws_a else ws_a
+            assert initiator_ws.receive_json() == {"type": "VOICE_START"}
+
+            offer = {"type": "offer", "sdp": "test-offer"}
+            initiator_ws.send_json(
+                {"type": "VOICE_OFFER", "description": offer}
+            )
+            assert responder_ws.receive_json() == {
+                "type": "VOICE_OFFER",
+                "description": offer,
+            }
+
+            answer = {"type": "answer", "sdp": "test-answer"}
+            responder_ws.send_json(
+                {"type": "VOICE_ANSWER", "description": answer}
+            )
+            assert initiator_ws.receive_json() == {
+                "type": "VOICE_ANSWER",
+                "description": answer,
+            }
+
+            candidate = {
+                "candidate": "candidate:1 test",
+                "sdpMid": "0",
+                "sdpMLineIndex": 0,
+            }
+            initiator_ws.send_json(
+                {"type": "VOICE_ICE", "candidate": candidate}
+            )
+            assert responder_ws.receive_json() == {
+                "type": "VOICE_ICE",
+                "candidate": candidate,
+            }
+
+            responder_ws.send_json({"type": "VOICE_LEAVE"})
+            assert initiator_ws.receive_json()["type"] == "VOICE_STATE"
+            assert responder_ws.receive_json()["type"] == "VOICE_STATE"
+            assert initiator_ws.receive_json() == {
+                "type": "VOICE_PEER_LEFT",
+                "seatIndex": (
+                    bob["seatIndex"] if responder_ws is ws_b else alice["seatIndex"]
+                ),
+            }
+
+
+def test_room_voice_rejects_invalid_tokens_and_malformed_signals() -> None:
+    with TestClient(app) as client:
+        alice = client.post("/rooms", json={"playerName": "Alice"}).json()
+        room = alice["roomCode"]
+        with client.websocket_connect(
+            f"/ws/rooms/{room}/voice?token=wrong"
+        ) as invalid:
+            assert invalid.receive_json() == {
+                "type": "ERROR",
+                "message": "Invalid room token.",
+            }
+
+        with client.websocket_connect(
+            f"/ws/rooms/{room}/voice?token={alice['playerToken']}"
+        ) as ws:
+            ws.receive_json()
+            ws.send_json(
+                {
+                    "type": "VOICE_OFFER",
+                    "description": {"type": "answer", "sdp": "wrong type"},
+                }
+            )
+            assert ws.receive_json() == {
+                "type": "ERROR",
+                "message": "Invalid voice description.",
+            }
+
+
+def test_room_voice_disconnect_notifies_the_active_partner() -> None:
+    with TestClient(app) as client:
+        alice = client.post("/rooms", json={"playerName": "Alice"}).json()
+        bob = client.post(
+            "/rooms/join",
+            json={"roomCode": alice["roomCode"], "playerName": "Bob"},
+        ).json()
+        room = alice["roomCode"]
+
+        with client.websocket_connect(
+            f"/ws/rooms/{room}/voice?token={bob['playerToken']}"
+        ) as ws_b:
+            ws_b.receive_json()
+            with client.websocket_connect(
+                f"/ws/rooms/{room}/voice?token={alice['playerToken']}"
+            ) as ws_a:
+                ws_a.receive_json()
+                ws_a.send_json({"type": "VOICE_JOIN"})
+                assert ws_a.receive_json()["activeSeatIndices"] == [
+                    alice["seatIndex"]
+                ]
+                assert ws_b.receive_json()["activeSeatIndices"] == [
+                    alice["seatIndex"]
+                ]
+
+            assert ws_b.receive_json() == {
+                "type": "VOICE_STATE",
+                "activeSeatIndices": [],
+            }
+            assert ws_b.receive_json() == {
+                "type": "VOICE_PEER_LEFT",
+                "seatIndex": alice["seatIndex"],
+            }
+
+
 def test_ws_room_redacts_hands_and_enforces_seat_actions() -> None:
     with TestClient(app) as client:
         created = client.post(

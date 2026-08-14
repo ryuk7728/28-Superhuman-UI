@@ -334,6 +334,27 @@ def resolve_if_catch_complete(state) -> None:
     points = abs(signed_points)
     winner_team = state.play_players[winner_index]["team"]
 
+    state.completed_catches.append(
+        {
+            "catchNumber": state.catchNumber,
+            "leaderSeatIndex": state.leaderIndex,
+            "plays": [
+                {
+                    "seatIndex": (state.leaderIndex + offset) % 4,
+                    "card": card,
+                    "wasTrump": bool(
+                        offset < len(state.trumpIndice)
+                        and state.trumpIndice[offset] == 1
+                    ),
+                }
+                for offset, card in enumerate(state.s)
+            ],
+            "winnerSeatIndex": winner_index,
+            "winnerTeam": winner_team,
+            "points": points,
+        }
+    )
+
     if winner_team == 1:
         state.team1Points += points
         state.team1Catches.append(list(state.s))

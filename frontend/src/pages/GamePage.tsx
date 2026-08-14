@@ -27,6 +27,11 @@ import { useGameWebSocket } from "../hooks/useGameWebSocket";
 import type { Card as CardType, RematchStatusMessage } from "../api/types";
 import { PLAYER_NAMES, BOT_BID_BUBBLE_DELAY_MS } from "../config/constants";
 import { RoomChat } from "../components/RoomChat";
+import { RoomVoice } from "../components/RoomVoice";
+import {
+  CatchHistoryModal,
+  CatchHistoryTrigger,
+} from "../components/CatchHistoryModal";
 import "../styles/index.scss";
 
 const BOT_SEATS = new Set([0, 2]);
@@ -150,6 +155,7 @@ export const GamePage: React.FC<GamePageProps> = ({
   const [revealedTrumpInfo, setRevealedTrumpInfo] = useState<{ suit: string; cardId?: string } | null>(null);
   const [rematchWaitingForSeat, setRematchWaitingForSeat] = useState<number | null>(null);
   const [rematchReadySeats, setRematchReadySeats] = useState<number[]>([]);
+  const [showCatchHistory, setShowCatchHistory] = useState(false);
 
   const {
     connected,
@@ -186,6 +192,11 @@ export const GamePage: React.FC<GamePageProps> = ({
   const finalBidderSeat = gameState?.finalBidderSeat;
   const finalBidValue = gameState?.finalBidValue;
   const playerNamesFromState = gameState?.playerNames ?? PLAYER_NAMES;
+  const completedCatches = gameState?.play?.completedCatches ?? [];
+
+  useEffect(() => {
+    setShowCatchHistory(false);
+  }, [gameId]);
 
   const effectiveControlledSeats = useMemo(() => {
     const raw = spectateMode
@@ -997,6 +1008,10 @@ export const GamePage: React.FC<GamePageProps> = ({
               trumpCardId={gameState.play?.trumpCardId}
               isRevealed={gameState.play?.trumpReveal || false}
             />
+            <CatchHistoryTrigger
+              count={completedCatches.length}
+              onOpen={() => setShowCatchHistory(true)}
+            />
           </>
         }
         uiPanelScore={
@@ -1023,10 +1038,24 @@ export const GamePage: React.FC<GamePageProps> = ({
         }
       />
       {roomCode && playerToken && !spectateMode ? (
-        <RoomChat
-          roomCode={roomCode}
-          playerToken={playerToken}
-          localSeatIndex={primarySeat}
+        <>
+          <RoomVoice
+            roomCode={roomCode}
+            playerToken={playerToken}
+            localSeatIndex={primarySeat}
+          />
+          <RoomChat
+            roomCode={roomCode}
+            playerToken={playerToken}
+            localSeatIndex={primarySeat}
+          />
+        </>
+      ) : null}
+      {showCatchHistory && completedCatches.length > 0 ? (
+        <CatchHistoryModal
+          catches={completedCatches}
+          playerNames={playerNamesFromState}
+          onClose={() => setShowCatchHistory(false)}
         />
       ) : null}
     </div>

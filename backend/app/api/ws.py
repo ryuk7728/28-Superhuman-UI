@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections import defaultdict
 from typing import Awaitable, Callable
 
@@ -43,6 +44,8 @@ EMPTY_TABLE_PAUSE_SECONDS = 1
 
 _ROOM_CONNECTIONS: dict[str, list[tuple[WebSocket, int | None, bool]]] = defaultdict(list)
 _ROOM_CHAT_CONNECTIONS: dict[str, list[WebSocket]] = defaultdict(list)
+_ROOM_VOICE_CONNECTIONS: dict[str, dict[int, WebSocket]] = defaultdict(dict)
+_ROOM_VOICE_ACTIVE: dict[str, set[int]] = defaultdict(set)
 _ROOM_REGISTRY_LOCK = asyncio.Lock()
 async def _register_room_connection(
     room_code: str, websocket: WebSocket, viewer_seat: int | None, can_act: bool
@@ -102,6 +105,111 @@ async def _broadcast_chat_message(room_code: str, payload: dict) -> None:
             stale.append(ws)
     for ws in stale:
         await _unregister_room_chat_connection(room_code, ws)
+
+
+async def _register_room_voice_connection(
+    room_code: str, seat_index: int, websocket: WebSocket
+) -> None:
+    async with _ROOM_REGISTRY_LOCK:
+        _ROOM_VOICE_CONNECTIONS[room_code.upper()][seat_index] = websocket
+
+
+async def _unregister_room_voice_connection(
+    room_code: str, seat_index: int, websocket: WebSocket
+) -> bool:
+    """Remove this exact socket and return whether its seat was voice-active."""
+    async with _ROOM_REGISTRY_LOCK:
+        key = room_code.upper()
+        sockets = _ROOM_VOICE_CONNECTIONS.get(key, {})
+        if sockets.get(seat_index) is not websocket:
+            return False
+        sockets.pop(seat_index, None)
+        was_active = seat_index in _ROOM_VOICE_ACTIVE.get(key, set())
+        _ROOM_VOICE_ACTIVE.get(key, set()).discard(seat_index)
+        if not sockets:
+            _ROOM_VOICE_CONNECTIONS.pop(key, None)
+        if not _ROOM_VOICE_ACTIVE.get(key):
+            _ROOM_VOICE_ACTIVE.pop(key, None)
+        return was_active
+
+
+async def _set_room_voice_active(
+    room_code: str, seat_index: int, active: bool
+) -> tuple[list[int], list[tuple[int, WebSocket]]]:
+    async with _ROOM_REGISTRY_LOCK:
+        key = room_code.upper()
+        if active:
+            _ROOM_VOICE_ACTIVE[key].add(seat_index)
+        else:
+            _ROOM_VOICE_ACTIVE.get(key, set()).discard(seat_index)
+            if not _ROOM_VOICE_ACTIVE.get(key):
+                _ROOM_VOICE_ACTIVE.pop(key, None)
+        active_seats = sorted(_ROOM_VOICE_ACTIVE.get(key, set()))
+        sockets = list(_ROOM_VOICE_CONNECTIONS.get(key, {}).items())
+        return active_seats, sockets
+
+
+async def _room_voice_snapshot(
+    room_code: str,
+) -> tuple[list[int], list[tuple[int, WebSocket]]]:
+    async with _ROOM_REGISTRY_LOCK:
+        key = room_code.upper()
+        return (
+            sorted(_ROOM_VOICE_ACTIVE.get(key, set())),
+            list(_ROOM_VOICE_CONNECTIONS.get(key, {}).items()),
+        )
+
+
+async def _send_voice_state(room_code: str) -> None:
+    active_seats, sockets = await _room_voice_snapshot(room_code)
+    for _seat, ws in sockets:
+        try:
+            await ws.send_json(
+                {"type": "VOICE_STATE", "activeSeatIndices": active_seats}
+            )
+        except Exception:
+            pass
+
+
+async def _send_voice_start_if_ready(room_code: str) -> None:
+    active_seats, sockets = await _room_voice_snapshot(room_code)
+    if len(active_seats) != 2:
+        return
+    initiator = min(active_seats)
+    initiator_ws = dict(sockets).get(initiator)
+    if initiator_ws is not None:
+        try:
+            await initiator_ws.send_json({"type": "VOICE_START"})
+        except Exception:
+            pass
+
+
+async def _relay_voice_signal(
+    room_code: str, from_seat: int, payload: dict
+) -> bool:
+    active_seats, sockets = await _room_voice_snapshot(room_code)
+    if from_seat not in active_seats:
+        return False
+    targets = [ws for seat, ws in sockets if seat != from_seat and seat in active_seats]
+    if len(targets) != 1:
+        return False
+    try:
+        await targets[0].send_json(payload)
+        return True
+    except Exception:
+        return False
+
+
+async def _notify_voice_peer_left(room_code: str, departed_seat: int) -> None:
+    _active_seats, sockets = await _room_voice_snapshot(room_code)
+    for seat, ws in sockets:
+        if seat != departed_seat:
+            try:
+                await ws.send_json(
+                    {"type": "VOICE_PEER_LEFT", "seatIndex": departed_seat}
+                )
+            except Exception:
+                pass
 
 
 async def _send_state(websocket: WebSocket, state) -> None:
@@ -1073,3 +1181,108 @@ async def ws_room_chat(websocket: WebSocket, room_code: str) -> None:
         return
     finally:
         await _unregister_room_chat_connection(room_code, websocket)
+
+
+@router.websocket("/ws/rooms/{room_code}/voice")
+async def ws_room_voice(websocket: WebSocket, room_code: str) -> None:
+    """Authenticated WebRTC signalling; microphone audio never crosses the server."""
+    await websocket.accept()
+    player_token = websocket.query_params.get("token", "").strip()
+    if not player_token:
+        await websocket.send_json({"type": "ERROR", "message": "Missing room token."})
+        await websocket.close()
+        return
+
+    try:
+        _room, seat_index = room_manager.validate_player(
+            room_code=room_code, player_token=player_token
+        )
+    except RoomNotFoundError:
+        await websocket.send_json({"type": "ERROR", "message": "Room not found."})
+        await websocket.close()
+        return
+    except RoomTokenError:
+        await websocket.send_json({"type": "ERROR", "message": "Invalid room token."})
+        await websocket.close()
+        return
+
+    await _register_room_voice_connection(room_code, seat_index, websocket)
+    active_seats, _sockets = await _room_voice_snapshot(room_code)
+    await websocket.send_json(
+        {"type": "VOICE_STATE", "activeSeatIndices": active_seats}
+    )
+
+    try:
+        while True:
+            msg = await websocket.receive_json()
+            message_type = msg.get("type")
+
+            if message_type == "VOICE_JOIN":
+                await _set_room_voice_active(room_code, seat_index, True)
+                await _send_voice_state(room_code)
+                await _send_voice_start_if_ready(room_code)
+                continue
+
+            if message_type == "VOICE_LEAVE":
+                await _set_room_voice_active(room_code, seat_index, False)
+                await _send_voice_state(room_code)
+                await _notify_voice_peer_left(room_code, seat_index)
+                continue
+
+            if message_type in {"VOICE_OFFER", "VOICE_ANSWER"}:
+                description = msg.get("description")
+                expected_type = "offer" if message_type == "VOICE_OFFER" else "answer"
+                if (
+                    not isinstance(description, dict)
+                    or description.get("type") != expected_type
+                    or not isinstance(description.get("sdp"), str)
+                    or len(description["sdp"]) > 64_000
+                ):
+                    await websocket.send_json(
+                        {"type": "ERROR", "message": "Invalid voice description."}
+                    )
+                    continue
+                relayed = await _relay_voice_signal(
+                    room_code,
+                    seat_index,
+                    {"type": message_type, "description": description},
+                )
+                if not relayed:
+                    await websocket.send_json(
+                        {"type": "ERROR", "message": "Your partner is not in voice yet."}
+                    )
+                continue
+
+            if message_type == "VOICE_ICE":
+                candidate = msg.get("candidate")
+                if candidate is not None and (
+                    not isinstance(candidate, dict)
+                    or len(json.dumps(candidate, separators=(",", ":"))) > 8_000
+                ):
+                    await websocket.send_json(
+                        {"type": "ERROR", "message": "Invalid voice network candidate."}
+                    )
+                    continue
+                relayed = await _relay_voice_signal(
+                    room_code,
+                    seat_index,
+                    {"type": "VOICE_ICE", "candidate": candidate},
+                )
+                if not relayed:
+                    await websocket.send_json(
+                        {"type": "ERROR", "message": "Your partner is not in voice yet."}
+                    )
+                continue
+
+            await websocket.send_json(
+                {"type": "ERROR", "message": "Unknown voice message type."}
+            )
+    except WebSocketDisconnect:
+        pass
+    finally:
+        was_active = await _unregister_room_voice_connection(
+            room_code, seat_index, websocket
+        )
+        if was_active:
+            await _send_voice_state(room_code)
+            await _notify_voice_peer_left(room_code, seat_index)

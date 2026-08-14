@@ -119,6 +119,10 @@ class GameState:
     team2Points: int = 0
     team1Catches: list[list[Cards]] = field(default_factory=list)
     team2Catches: list[list[Cards]] = field(default_factory=list)
+    # Public, chronological record of completed catches. Each entry keeps the
+    # original play order and seat attribution so reconnecting viewers can
+    # inspect previous catches without reconstructing them from log strings.
+    completed_catches: list[dict[str, Any]] = field(default_factory=list)
 
     play_players: list[dict[str, Any]] = field(default_factory=list)
 
@@ -182,6 +186,24 @@ class GameState:
             "Spades": self.trump_matrix[2],
             "Clubs": self.trump_matrix[3],
         }
+        completed_catches = [
+            {
+                "catchNumber": record["catchNumber"],
+                "leaderSeatIndex": record["leaderSeatIndex"],
+                "plays": [
+                    {
+                        "seatIndex": play["seatIndex"],
+                        "card": serialize_card(play["card"]),
+                        "wasTrump": play["wasTrump"],
+                    }
+                    for play in record["plays"]
+                ],
+                "winnerSeatIndex": record["winnerSeatIndex"],
+                "winnerTeam": record["winnerTeam"],
+                "points": record["points"],
+            }
+            for record in self.completed_catches
+        ]
 
         return {
             "gameId": self.game_id,
@@ -232,6 +254,7 @@ class GameState:
                 "team1Points": self.team1Points,
                 "team2Points": self.team2Points,
                 "winnerTeam": self.winnerTeam,
+                "completedCatches": completed_catches,
             },
             "eventLog": self.event_log,
             "selfPlay": {

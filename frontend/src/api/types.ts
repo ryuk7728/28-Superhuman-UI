@@ -29,6 +29,21 @@ export type KPolicy = {
   kByCatch: number[];
 };
 
+export type CompletedCatchPlay = {
+  seatIndex: number;
+  card: Card;
+  wasTrump: boolean;
+};
+
+export type CompletedCatch = {
+  catchNumber: number;
+  leaderSeatIndex: number;
+  plays: CompletedCatchPlay[];
+  winnerSeatIndex: number;
+  winnerTeam: number;
+  points: number;
+};
+
 export type GameState = {
   gameId: string;
   viewerSeatIndex?: number;
@@ -75,6 +90,7 @@ export type GameState = {
     team1Points: number;
     team2Points: number;
     winnerTeam: number | null;
+    completedCatches?: CompletedCatch[];
   };
   eventLog: string[];
   selfPlay?: {
@@ -110,6 +126,15 @@ export type ChatMessage = {
 export type ChatWsMessage =
   | { type: "CHAT_HISTORY"; messages: ChatMessage[] }
   | { type: "CHAT_MESSAGE"; message: ChatMessage }
+  | { type: "ERROR"; message: string };
+
+export type VoiceWsMessage =
+  | { type: "VOICE_STATE"; activeSeatIndices: number[] }
+  | { type: "VOICE_START" }
+  | { type: "VOICE_OFFER"; description: RTCSessionDescriptionInit }
+  | { type: "VOICE_ANSWER"; description: RTCSessionDescriptionInit }
+  | { type: "VOICE_ICE"; candidate: RTCIceCandidateInit | null }
+  | { type: "VOICE_PEER_LEFT"; seatIndex: number }
   | { type: "ERROR"; message: string };
 
 export type RoomStatusResponse = {
