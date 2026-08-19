@@ -212,6 +212,9 @@ class GameState:
             "Spades": self.trump_matrix[2],
             "Clubs": self.trump_matrix[3],
         }
+        # Players may review only the immediately preceding catch. Keep the
+        # complete internal list for the private replay archive, but expose the
+        # latest entry only through live game state.
         completed_catches = [
             {
                 "catchNumber": record["catchNumber"],
@@ -228,7 +231,7 @@ class GameState:
                 "winnerTeam": record["winnerTeam"],
                 "points": record["points"],
             }
-            for record in self.completed_catches
+            for record in self.completed_catches[-1:]
         ]
 
         return {

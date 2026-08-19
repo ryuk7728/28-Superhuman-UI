@@ -141,3 +141,14 @@ def test_original_code_and_name_restore_same_seat_after_rematch_and_process_loss
     assert restored_state.team1Coolies == 4
     assert restored_state.team2Coolies == 3
     assert restored_state.coolies_awarded_for_deal is False
+
+    selected = room_manager.join_room(
+        room_code=alice.room_code, rejoin_seat_index=bob.seat_index
+    )
+    assert selected.seat_index == bob.seat_index
+    assert selected.player_token == bob.player_token
+    status = room_manager.get_room_status(room_code=alice.room_code)
+    assert {player["seatName"] for player in status["humanPlayers"]} == {
+        "Alice",
+        "Bob",
+    }

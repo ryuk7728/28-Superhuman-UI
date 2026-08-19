@@ -153,6 +153,10 @@ export type RoomStatusResponse = {
   seatName?: string | null;
   waitingForPlayer: boolean;
   playersJoined: number;
+  humanPlayers?: Array<{
+    seatIndex: number;
+    seatName: string;
+  }>;
 };
 
 export type LegalActions =

@@ -1,5 +1,6 @@
 from app.engine.cards_adapter import from_card_id
 from app.engine.play_engine import init_play_state, resolve_if_catch_complete
+from app.engine.replay_payload import build_replay_payload
 from app.engine.state import GameState
 
 
@@ -110,3 +111,29 @@ def test_viewer_state_exposes_history_but_keeps_current_opponent_hands_hidden() 
         "cardId"
     ] == "Hearts_Jack"
     assert viewer_state["players"][0]["cards"][0]["suit"] == "Hidden"
+
+
+def test_live_state_exposes_only_immediately_previous_catch() -> None:
+    state = _completed_trick_state()
+    resolve_if_catch_complete(state)
+
+    state.currentSuit = "Clubs"
+    state.s = [
+        from_card_id("Clubs_Ace"),
+        from_card_id("Clubs_Seven"),
+        from_card_id("Clubs_Jack"),
+        from_card_id("Clubs_Nine"),
+    ]
+    state.trumpPlayed = False
+    state.trumpIndice = [0, 0, 0, 0]
+    resolve_if_catch_complete(state)
+
+    # The complete list remains available for the private replay archive.
+    assert [item["catchNumber"] for item in state.completed_catches] == [1, 2]
+    # A live player can inspect only the immediately preceding catch.
+    public_history = state.to_public_dict()["play"]["completedCatches"]
+    assert [item["catchNumber"] for item in public_history] == [2]
+    replay_history = build_replay_payload(state, room_code="ABC123")[
+        "completedCatches"
+    ]
+    assert [item["catchNumber"] for item in replay_history] == [1, 2]

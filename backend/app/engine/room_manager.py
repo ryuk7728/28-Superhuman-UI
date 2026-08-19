@@ -286,6 +286,7 @@ class RoomManager:
         room_code: str,
         player_token: str | None = None,
         player_name: str | None = None,
+        rejoin_seat_index: int | None = None,
     ) -> RoomAssignment:
         with self._lock:
             self._cleanup_expired_locked()
@@ -297,6 +298,14 @@ class RoomManager:
                 seat_index = self._find_seat_for_token_locked(room, token)
                 if seat_index is not None and player_name:
                     room.seat_names[seat_index] = self._normalize_player_name(player_name)
+
+            if seat_index is None and rejoin_seat_index is not None:
+                if rejoin_seat_index not in HUMAN_ROOM_SEATS:
+                    raise RoomError("Only a human player can be rejoined.")
+                if rejoin_seat_index not in room.seat_tokens:
+                    raise RoomError("That player has not joined this room yet.")
+                seat_index = rejoin_seat_index
+                token = room.seat_tokens[seat_index]
 
             if seat_index is None:
                 normalized_name = self._normalize_player_name(player_name)
@@ -359,6 +368,16 @@ class RoomManager:
                 "seatName": room.seat_names.get(seat_index) if seat_index is not None else None,
                 "waitingForPlayer": room.waiting_for_player,
                 "playersJoined": room.players_joined,
+                "humanPlayers": [
+                    {
+                        "seatIndex": seat_index,
+                        "seatName": room.seat_names.get(
+                            seat_index, f"P{seat_index + 1}"
+                        ),
+                    }
+                    for seat_index in HUMAN_ROOM_SEATS
+                    if seat_index in room.seat_tokens
+                ],
                 "biddingPolicy": room.bot_bidding_policy.to_public_dict(),
                 "kPolicy": room.bot_k_policy.to_public_dict(),
                 "botThinkTimeSeconds": room.bot_think_timeout_seconds,

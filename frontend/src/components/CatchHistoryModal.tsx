@@ -59,7 +59,7 @@ export function CatchHistoryModal({ catches, playerNames, onClose }: Props) {
             type="button"
             className="catch-history-close"
             onClick={onClose}
-            aria-label="Close previous catches"
+            aria-label="Close previous catch"
           >
             <span aria-hidden>×</span>
             <small>Close</small>
@@ -69,11 +69,8 @@ export function CatchHistoryModal({ catches, playerNames, onClose }: Props) {
               <HistoryIcon />
             </span>
             <div>
-              <p>Game record</p>
-              <h2 id="catch-history-title">Previous catches</h2>
-              <span>
-                {catches.length} {catches.length === 1 ? "catch" : "catches"} completed
-              </span>
+              <p>Last completed</p>
+              <h2 id="catch-history-title">Previous catch</h2>
             </div>
           </div>
         </header>
@@ -159,8 +156,7 @@ export function CatchHistoryTrigger({
       aria-haspopup="dialog"
     >
       <HistoryIcon />
-      <span>Previous catches</span>
-      <strong>{count}</strong>
+      <span>Previous catch</span>
     </button>
   );
 }

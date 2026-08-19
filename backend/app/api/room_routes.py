@@ -28,6 +28,7 @@ class JoinRoomRequest(BaseModel):
     roomCode: str
     playerToken: str | None = None
     playerName: str | None = Field(default=None, max_length=24)
+    rejoinSeatIndex: int | None = Field(default=None, ge=0, le=3)
 
 
 class RoomJoinResponse(BaseModel):
@@ -74,6 +75,7 @@ def join_room(req: JoinRoomRequest) -> RoomJoinResponse:
             room_code=req.roomCode,
             player_token=req.playerToken,
             player_name=req.playerName,
+            rejoin_seat_index=req.rejoinSeatIndex,
         )
         return _to_join_response(assignment)
     except RoomNotFoundError as e:

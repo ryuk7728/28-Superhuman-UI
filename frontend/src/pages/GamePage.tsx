@@ -192,11 +192,15 @@ export const GamePage: React.FC<GamePageProps> = ({
   const finalBidderSeat = gameState?.finalBidderSeat;
   const finalBidValue = gameState?.finalBidValue;
   const playerNamesFromState = gameState?.playerNames ?? PLAYER_NAMES;
-  const completedCatches = gameState?.play?.completedCatches ?? [];
+  const dealNumber = gameState?.dealNumber ?? 1;
+  // The live table intentionally permits reviewing only the immediately
+  // preceding catch. The backend enforces the same limit; slicing here also
+  // protects the UI while reconnecting to an older server response.
+  const completedCatches = (gameState?.play?.completedCatches ?? []).slice(-1);
 
   useEffect(() => {
     setShowCatchHistory(false);
-  }, [gameId]);
+  }, [gameId, dealNumber]);
 
   const effectiveControlledSeats = useMemo(() => {
     const raw = spectateMode

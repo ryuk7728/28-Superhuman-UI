@@ -95,6 +95,8 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
   const [createPlayerName, setCreatePlayerName] = useState("");
   const [joinPlayerName, setJoinPlayerName] = useState("");
   const [joinCode, setJoinCode] = useState("");
+  const [joinRoomStatus, setJoinRoomStatus] = useState<RoomStatusResponse | null>(null);
+  const [roomLookupLoading, setRoomLookupLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [waiting, setWaiting] = useState<WaitingState | null>(null);
@@ -139,6 +141,34 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
   const existingJoinToken = useMemo(() => {
     if (!normalizedJoinCode) return null;
     return localStorage.getItem(tokenStorageKey(normalizedJoinCode));
+  }, [normalizedJoinCode]);
+
+  useEffect(() => {
+    setJoinRoomStatus(null);
+    if (normalizedJoinCode.length !== 6) {
+      setRoomLookupLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setRoomLookupLoading(true);
+      try {
+        const response = await http.get<RoomStatusResponse>(
+          `/rooms/${normalizedJoinCode}`
+        );
+        if (!cancelled) setJoinRoomStatus(response.data);
+      } catch {
+        if (!cancelled) setJoinRoomStatus(null);
+      } finally {
+        if (!cancelled) setRoomLookupLoading(false);
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [normalizedJoinCode]);
 
   const persistToken = (roomCode: string, playerToken: string) => {
@@ -198,12 +228,12 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
     }
   }
 
-  async function joinRoom(useStoredToken: boolean) {
+  async function joinRoom(useStoredToken: boolean, rejoinSeatIndex?: number) {
     if (!normalizedJoinCode) {
       setError("Enter a room code.");
       return;
     }
-    if (!useStoredToken && !joinPlayerName.trim()) {
+    if (!useStoredToken && rejoinSeatIndex === undefined && !joinPlayerName.trim()) {
       setError("Enter your name.");
       return;
     }
@@ -213,7 +243,12 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
       const res = await http.post<RoomJoinResponse>("/rooms/join", {
         roomCode: normalizedJoinCode,
         playerToken: useStoredToken ? existingJoinToken || null : null,
-        playerName: useStoredToken ? null : joinPlayerName.trim(),
+        playerName:
+          useStoredToken || rejoinSeatIndex !== undefined
+            ? null
+            : joinPlayerName.trim(),
+        rejoinSeatIndex:
+          useStoredToken || rejoinSeatIndex === undefined ? null : rejoinSeatIndex,
       });
       const data = res.data;
       persistToken(data.roomCode, data.playerToken);
@@ -671,30 +706,65 @@ export function MultiplayerLobbyPage({ onReady, onSelfPlay }: Props) {
               />
             </div>
 
-            <div className="field">
-              <label className="field-label">Your Name</label>
-              <input
-                value={joinPlayerName}
-                onChange={(e) => setJoinPlayerName(e.target.value)}
-                placeholder="Enter your name"
-                maxLength={24}
-                autoComplete="off"
-              />
-            </div>
+            {roomLookupLoading ? (
+              <div className="room-lookup-status">Finding players…</div>
+            ) : null}
 
-            <button className="btn-join" onClick={() => joinRoom(false)} disabled={loading || !joinPlayerName.trim()}>
-              {loading ? "Joining..." : "Join as New Player"}
-            </button>
+            {(joinRoomStatus?.humanPlayers?.length ?? 0) > 0 ? (
+              <div className="rejoin-picker">
+                <div className="rejoin-heading">
+                  <strong>Rejoin game</strong>
+                  <small>Select who you were</small>
+                </div>
+                <div className="rejoin-options">
+                  {joinRoomStatus?.humanPlayers?.map((player) => (
+                    <button
+                      key={player.seatIndex}
+                      type="button"
+                      onClick={() => joinRoom(false, player.seatIndex)}
+                      disabled={loading}
+                    >
+                      <span>{player.seatName}</span>
+                      <small>P{player.seatIndex + 1}</small>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {existingJoinToken && (
+              <button className="btn-reconnect" onClick={() => joinRoom(true)} disabled={loading}>
+                Continue Your Previous Seat
+              </button>
+            )}
+
+            {joinRoomStatus?.waitingForPlayer !== false ? (
+              <div className="join-new-divider"><span>or join as new</span></div>
+            ) : null}
+
+            {joinRoomStatus?.waitingForPlayer !== false ? (
+              <>
+                <div className="field">
+                  <label className="field-label">Your Name</label>
+                  <input
+                    value={joinPlayerName}
+                    onChange={(e) => setJoinPlayerName(e.target.value)}
+                    placeholder="Enter your name"
+                    maxLength={24}
+                    autoComplete="off"
+                  />
+                </div>
+
+                <button className="btn-join" onClick={() => joinRoom(false)} disabled={loading || !joinPlayerName.trim()}>
+                  {loading ? "Joining..." : "Join as New Player"}
+                </button>
+              </>
+            ) : null}
 
             <button className="btn-spectate" onClick={spectateRoom} disabled={loading || !normalizedJoinCode}>
               {loading ? "Checking..." : "Spectate Room"}
             </button>
 
-            {existingJoinToken && (
-              <button className="btn-reconnect" onClick={() => joinRoom(true)} disabled={loading}>
-                Reconnect Previous Seat
-              </button>
-            )}
           </div>
         </div>
 

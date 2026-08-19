@@ -83,6 +83,42 @@ def test_room_create_join_reconnect_flow() -> None:
         assert rejoin["playerToken"] == created["playerToken"]
         assert rejoin["gameId"] == joined["gameId"]
 
+        status = client.get(f"/rooms/{created['roomCode']}").json()
+        assert status["humanPlayers"] == [
+            {"seatIndex": created["seatIndex"], "seatName": "Alice"},
+            {"seatIndex": joined["seatIndex"], "seatName": "Bob"},
+        ]
+
+
+def test_player_can_select_exact_human_seat_when_rejoining() -> None:
+    with TestClient(app) as client:
+        created = client.post(
+            "/rooms", json={"startingBidderIndex": 0, "playerName": "Same Name"}
+        ).json()
+        joined = client.post(
+            "/rooms/join",
+            json={"roomCode": created["roomCode"], "playerName": "Same Name"},
+        ).json()
+
+        selected = client.post(
+            "/rooms/join",
+            json={
+                "roomCode": created["roomCode"],
+                "rejoinSeatIndex": joined["seatIndex"],
+            },
+        )
+        assert selected.status_code == 200
+        assert selected.json()["seatIndex"] == joined["seatIndex"]
+        assert selected.json()["playerToken"] == joined["playerToken"]
+        assert selected.json()["seatName"] == "Same Name"
+
+        bot_seat = client.post(
+            "/rooms/join",
+            json={"roomCode": created["roomCode"], "rejoinSeatIndex": 0},
+        )
+        assert bot_seat.status_code == 400
+        assert "human player" in bot_seat.json()["detail"].lower()
+
 
 def test_room_propagates_custom_position_aware_policy_to_game_state() -> None:
     policy = {
@@ -474,6 +510,16 @@ def test_room_rematch_requires_both_humans_and_rotates_starting_bidder() -> None
         state_obj.winnerTeam = 2
         state_obj.team2Points = 18
         state_obj.team1Points = 10
+        state_obj.completed_catches = [
+            {
+                "catchNumber": 8,
+                "leaderSeatIndex": 0,
+                "plays": [],
+                "winnerSeatIndex": 0,
+                "winnerTeam": 1,
+                "points": 0,
+            }
+        ]
 
         with client.websocket_connect(
             f"/ws/rooms/{room_code}?token={seat1['playerToken']}"
@@ -500,3 +546,6 @@ def test_room_rematch_requires_both_humans_and_rotates_starting_bidder() -> None
             assert updated["gameId"] == game_id
             assert updated["phase"] != "GAME_OVER"
             assert updated["startingBidderIndex"] == (previous_start + 1) % 4
+            assert updated["dealNumber"] == 2
+            assert updated["play"]["completedCatches"] == []
+            assert state_obj.completed_catches == []
