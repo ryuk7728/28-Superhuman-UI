@@ -40,6 +40,8 @@ def initialize_deal_replay(state, *, increment_deal: bool = False) -> None:
     state.reveal_history = []
     state.play_history = []
     state.completed_catches = []
+    state.coolies_awarded_for_deal = False
+    state.deal_coolie_award = None
     state.replay_revision += 1
 
 
@@ -97,6 +99,36 @@ def mark_deal_completed(state) -> None:
     if state.deal_completed_at_epoch_ms is None:
         state.deal_completed_at_epoch_ms = now_epoch_ms()
         state.replay_revision += 1
+
+
+def award_coolies_for_completed_deal(state, *, bidder_team: int) -> None:
+    """Apply the room-level coolie penalty exactly once for a finished deal."""
+    if state.coolies_awarded_for_deal:
+        return
+    if bidder_team not in (1, 2) or state.winnerTeam not in (1, 2):
+        raise ValueError("Coolies require a valid bidder team and winning team.")
+
+    caller_won = state.winnerTeam == bidder_team
+    penalized_team = (2 if bidder_team == 1 else 1) if caller_won else bidder_team
+    amount = 1 if caller_won else 2
+
+    if penalized_team == 1:
+        state.team1Coolies += amount
+    else:
+        state.team2Coolies += amount
+
+    state.coolies_awarded_for_deal = True
+    state.deal_coolie_award = {
+        "team": penalized_team,
+        "amount": amount,
+        "reason": "caller_won" if caller_won else "caller_lost",
+    }
+    state.event_log.append(
+        f"COOLIES: Team {penalized_team} receives {amount} "
+        f"coolie{'s' if amount != 1 else ''} because the caller "
+        f"{'made' if caller_won else 'failed'} the bid."
+    )
+    state.replay_revision += 1
 
 
 def card_play_context(state, *, seat_index: int, legal_card_ids: list[str]) -> dict[str, Any]:

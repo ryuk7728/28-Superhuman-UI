@@ -6,7 +6,12 @@ from dataclasses import dataclass
 
 from app.engine.cards_adapter import from_card_id, to_card_id
 from app.engine.state import SUIT_MATRIX_INDEX
-from app.engine.replay_tracking import all_effective_hands, card_play_context, mark_deal_completed
+from app.engine.replay_tracking import (
+    all_effective_hands,
+    award_coolies_for_completed_deal,
+    card_play_context,
+    mark_deal_completed,
+)
 from app.legacy.cards import Cards
 from app.legacy import minimax as legacy_minimax
 
@@ -474,6 +479,7 @@ def resolve_if_catch_complete(state) -> None:
                 f"GAME OVER: Team {other_team} wins "
                 f"({bidding_points} < {state.finalBidValue})."
             )
+        award_coolies_for_completed_deal(state, bidder_team=bidder_team)
         mark_deal_completed(state)
 
         state.phase = "GAME_OVER"

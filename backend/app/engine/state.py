@@ -118,6 +118,11 @@ class GameState:
 
     team1Points: int = 0
     team2Points: int = 0
+    # Cumulative match penalties across deals in the same room. Lower is better.
+    team1Coolies: int = 0
+    team2Coolies: int = 0
+    coolies_awarded_for_deal: bool = False
+    deal_coolie_award: dict[str, Any] | None = None
     team1Catches: list[list[Cards]] = field(default_factory=list)
     team2Catches: list[list[Cards]] = field(default_factory=list)
     # Public, chronological record of completed catches. Each entry keeps the
@@ -274,6 +279,9 @@ class GameState:
                 "trumpIndice": self.trumpIndice,
                 "team1Points": self.team1Points,
                 "team2Points": self.team2Points,
+                "team1Coolies": self.team1Coolies,
+                "team2Coolies": self.team2Coolies,
+                "dealCoolieAward": self.deal_coolie_award,
                 "winnerTeam": self.winnerTeam,
                 "completedCatches": completed_catches,
             },

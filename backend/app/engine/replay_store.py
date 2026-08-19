@@ -55,6 +55,8 @@ class ReplayStore:
             "winnerTeam": replay["winnerTeam"],
             "team1Points": replay["team1Points"],
             "team2Points": replay["team2Points"],
+            "team1Coolies": replay["team1Coolies"],
+            "team2Coolies": replay["team2Coolies"],
             "replayJson": json.dumps(replay, separators=(",", ":")),
             "stateJson": json.dumps(state_storage, separators=(",", ":")),
         }

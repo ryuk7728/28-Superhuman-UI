@@ -1,8 +1,8 @@
 /**
- * ScorePanel - Shows game score and current bid info
+ * ScorePanel - Shows cumulative coolies and current bid info
  *
  * Features:
- * - Team scores (Humans vs Bots)
+ * - Team coolies (Humans vs Bots; lower is better)
  * - Current bid and bidding team
  * - Points collected in current round
  */
@@ -35,7 +35,7 @@ export const ScorePanel: React.FC<ScorePanelProps> = ({
         <thead>
           <tr>
             <th>Team</th>
-            <th>Score</th>
+            <th>Coolies</th>
             <th>Points</th>
           </tr>
         </thead>

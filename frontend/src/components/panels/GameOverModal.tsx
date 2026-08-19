@@ -3,7 +3,7 @@
  *
  * Features:
  * - Shows win/lose result
- * - Final scores and points
+ * - Cumulative coolies and final deal points
  * - New game button
  */
 
@@ -52,7 +52,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
 
         <div className="result-details">
           <div className="score-line">
-            <strong>Final Score:</strong> You {humanScore} - {botScore} Bots
+            <strong>Coolies:</strong> You {humanScore} - {botScore} Bots
           </div>
           <div className="score-line">
             <strong>Points:</strong> You {humanPoints} - {botPoints} Bots

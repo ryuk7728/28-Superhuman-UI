@@ -78,7 +78,7 @@ function ScoreTable({ humanScore, botScore, humanBid, botBid }: ScoreTableProps)
       <thead>
         <tr>
           <th>Team</th>
-          <th>Score</th>
+          <th>Coolies</th>
           <th>Bid</th>
         </tr>
       </thead>

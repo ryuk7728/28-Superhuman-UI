@@ -91,6 +91,13 @@ export type GameState = {
     trumpIndice: number[];
     team1Points: number;
     team2Points: number;
+    team1Coolies: number;
+    team2Coolies: number;
+    dealCoolieAward?: {
+      team: number;
+      amount: number;
+      reason: "caller_won" | "caller_lost";
+    } | null;
     winnerTeam: number | null;
     completedCatches?: CompletedCatch[];
   };

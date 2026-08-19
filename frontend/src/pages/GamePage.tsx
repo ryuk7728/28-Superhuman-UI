@@ -902,8 +902,8 @@ export const GamePage: React.FC<GamePageProps> = ({
     return (
       <GameOverModal
         didWin={didWin}
-        humanScore={0}
-        botScore={0}
+        humanScore={gameState.play.team2Coolies}
+        botScore={gameState.play.team1Coolies}
         humanPoints={gameState.play.team2Points}
         botPoints={gameState.play.team1Points}
         bidValue={finalBidValue || 0}
@@ -1021,8 +1021,8 @@ export const GamePage: React.FC<GamePageProps> = ({
         }
         uiPanelScore={
           <ScorePanel
-            humanScore={0}
-            botScore={0}
+            humanScore={gameState.play?.team2Coolies || 0}
+            botScore={gameState.play?.team1Coolies || 0}
             currentBid={finalBidValue ?? null}
             biddingTeam={biddingTeam}
             humanPoints={gameState.play?.team2Points || 0}
