@@ -33,6 +33,31 @@ $reveal-btn: #8b5cf6;
   }
 }
 
+.game-over-actions {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 1rem;
+}
+
+.replay-game-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(229, 199, 105, 0.55);
+  border-radius: 10px;
+  color: #f2d675;
+  background: rgba(8, 44, 31, 0.7);
+  text-decoration: none;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+
+  &:hover {
+    background: rgba(18, 72, 50, 0.9);
+  }
+}
+
 // Bidding panel
 .bidding-panel {
   max-width: 360px;

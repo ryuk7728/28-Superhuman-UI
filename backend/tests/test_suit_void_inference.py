@@ -70,6 +70,55 @@ def test_void_inference_sets_matrix_when_player_fails_to_follow() -> None:
             assert state.suit_matrix[r][c] == before[r][c]
 
 
+def test_revealer_playing_non_trump_is_marked_void_in_led_and_trump_suits() -> None:
+    state = _make_min_play_state()
+
+    state.leaderIndex = 0
+    state.s = [from_card_id("Hearts_Ace")]
+    state.currentSuit = "Hearts"
+
+    apply_reveal_choice(state, seat_index=1, reveal=True)
+    apply_play_card(state, seat_index=1, card_id="Clubs_Seven")
+
+    assert state.suit_matrix[SUIT_MATRIX_INDEX["Hearts"]][1] == 0
+    assert state.suit_matrix[SUIT_MATRIX_INDEX["Spades"]][1] == 0
+    assert any(
+        "P2 is void in revealed trump suit Spades" in event
+        for event in state.event_log
+    )
+
+
+def test_revealer_playing_trump_is_not_marked_void_in_trump_suit() -> None:
+    state = _make_min_play_state()
+    state.play_players[1]["cards"].append(from_card_id("Spades_Seven"))
+
+    state.leaderIndex = 0
+    state.s = [from_card_id("Hearts_Ace")]
+    state.currentSuit = "Hearts"
+
+    apply_reveal_choice(state, seat_index=1, reveal=True)
+    apply_play_card(state, seat_index=1, card_id="Spades_Seven")
+
+    assert state.suit_matrix[SUIT_MATRIX_INDEX["Hearts"]][1] == 0
+    assert state.suit_matrix[SUIT_MATRIX_INDEX["Spades"]][1] == 1
+
+
+def test_non_trump_play_after_an_earlier_reveal_does_not_infer_trump_void() -> None:
+    state = _make_min_play_state()
+
+    state.leaderIndex = 0
+    state.s = [from_card_id("Hearts_Ace")]
+    state.currentSuit = "Hearts"
+    state.trumpReveal = True
+    state.known = True
+    state.chose = False
+
+    apply_play_card(state, seat_index=1, card_id="Clubs_Seven")
+
+    assert state.suit_matrix[SUIT_MATRIX_INDEX["Hearts"]][1] == 0
+    assert state.suit_matrix[SUIT_MATRIX_INDEX["Spades"]][1] == 1
+
+
 def test_leader_play_does_not_mark_void() -> None:
     state = _make_min_play_state()
 

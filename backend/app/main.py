@@ -11,6 +11,7 @@ from app.settings import settings
 from app.api.routes import router as http_router
 from app.api.room_routes import router as room_router
 from app.api.ws import router as ws_router
+from app.api.replay_routes import router as replay_router
 
 
 @asynccontextmanager
@@ -31,6 +32,7 @@ app = FastAPI(title="28 Game Server", debug=settings.debug, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=list(settings.cors_origins),
+    allow_origin_regex=settings.cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,3 +41,4 @@ app.add_middleware(
 app.include_router(http_router)
 app.include_router(room_router)
 app.include_router(ws_router)
+app.include_router(replay_router)

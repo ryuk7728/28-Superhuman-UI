@@ -46,6 +46,8 @@ export type CompletedCatch = {
 
 export type GameState = {
   gameId: string;
+  roomCode?: string | null;
+  dealNumber?: number;
   viewerSeatIndex?: number;
   playerNames?: string[];
   phase: string;

@@ -51,6 +51,13 @@ def _get_str_optional(name: str) -> str | None:
     return val
 
 
+def _get_csv(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
 def _get_k_by_catch_map(name: str) -> dict[int, int]:
     """
     Parse env like: "1:3,2:3,3:4,4:4,5:4,6:3,7:2,8:1"
@@ -129,12 +136,32 @@ class Settings:
     )
     room_ttl_seconds: int = _get_int("APP_ROOM_TTL_SECONDS", 24 * 60 * 60)
 
-    cors_origins: tuple[str, ...] = (
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "https://28-superhuman-ui.vercel.app",
-        "https://28-multiplayer.vercel.app",
+    # Durable multiplayer room and replay storage. Local development and tests
+    # use memory; Cloud Run uses Firestore via Application Default Credentials.
+    replay_store: str = _get_str("APP_REPLAY_STORE", "memory").strip().lower()
+    replay_password: str = _get_str("APP_REPLAY_PASSWORD", "banana123")
+    gcp_project_id: str | None = _get_str_optional("GOOGLE_CLOUD_PROJECT")
+    replay_firestore_collection: str = _get_str(
+        "APP_REPLAY_FIRESTORE_COLLECTION", "game28_replays"
     )
+    session_firestore_collection: str = _get_str(
+        "APP_SESSION_FIRESTORE_COLLECTION", "game28_sessions"
+    )
+
+    cors_origins: tuple[str, ...] = field(
+        default_factory=lambda: _get_csv(
+            "APP_CORS_ORIGINS",
+            (
+                "http://localhost:5173",
+                "http://127.0.0.1:5173",
+                "http://localhost:5174",
+                "http://127.0.0.1:5174",
+                "https://28-superhuman-ui.vercel.app",
+                "https://28-multiplayer.vercel.app",
+            ),
+        )
+    )
+    cors_origin_regex: str | None = _get_str_optional("APP_CORS_ORIGIN_REGEX")
 
 
 settings = Settings()

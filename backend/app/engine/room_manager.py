@@ -6,10 +6,14 @@ import secrets
 import string
 import threading
 import time
+import logging
 
-from app.bots.bid_policy import BidPolicyConfig
+from app.bots.bid_policy import BidPolicyConfig, BidThresholds
 from app.engine.game_manager import game_manager
 from app.engine.k_policy import KPolicyConfig
+from app.engine.replay_payload import build_replay_payload
+from app.engine.replay_store import replay_store
+from app.engine.state_storage import game_state_from_storage_dict, game_state_to_storage_dict
 from app.settings import settings
 
 HUMAN_ROOM_SEATS: tuple[int, int] = (1, 3)
@@ -22,6 +26,7 @@ MAX_CHAT_MESSAGE_LENGTH = 280
 MAX_CHAT_HISTORY = 100
 CHAT_RATE_WINDOW_SECONDS = 10.0
 CHAT_RATE_MAX_MESSAGES = 5
+logger = logging.getLogger(__name__)
 
 
 class RoomError(Exception):
@@ -44,6 +49,7 @@ class RoomTokenError(RoomError):
 class Room:
     code: str
     created_at: float
+    updated_at: float
     starting_bidder_index: int
     bot_bidding_policy: BidPolicyConfig = field(default_factory=BidPolicyConfig.aggressive)
     bot_k_policy: KPolicyConfig = field(default_factory=KPolicyConfig)
@@ -95,7 +101,7 @@ class RoomManager:
         ttl = max(60, settings.room_ttl_seconds)
         expired_codes: list[str] = []
         for code, room in self._rooms.items():
-            if now - room.created_at <= ttl:
+            if now - room.updated_at <= ttl:
                 continue
             expired_codes.append(code)
             if room.game_id:
@@ -114,8 +120,86 @@ class RoomManager:
         code = room_code.strip().upper()
         room = self._rooms.get(code)
         if room is None:
+            stored = replay_store.load_session(code)
+            if stored is not None:
+                room = self._room_from_storage_locked(stored)
+                self._rooms[code] = room
+        if room is None:
             raise RoomNotFoundError("Room not found.")
         return room
+
+    def _room_from_storage_locked(self, payload: dict[str, object]) -> Room:
+        policy_data = payload.get("botBiddingPolicy") or {}
+        thresholds_data = policy_data.get("thresholds") or {}
+        mode = str(policy_data.get("mode", "aggressive"))
+        position_aware = bool(policy_data.get("positionAware", False))
+        if mode == "optimal":
+            policy = BidPolicyConfig.optimal(position_aware=position_aware)
+        elif mode == "custom":
+            policy = BidPolicyConfig.custom(
+                BidThresholds(
+                    opening_15=int(thresholds_data["opening15"]),
+                    opening_16=int(thresholds_data["opening16"]),
+                    later_bid=int(thresholds_data["laterBid"]),
+                    jump_to_16=int(thresholds_data["jumpTo16"]),
+                ),
+                position_aware=position_aware,
+            )
+        else:
+            policy = BidPolicyConfig.aggressive(position_aware=position_aware)
+
+        room = Room(
+            code=str(payload["roomCode"]),
+            created_at=float(payload.get("createdAt", time.time())),
+            updated_at=float(payload.get("updatedAt", time.time())),
+            starting_bidder_index=int(payload.get("startingBidderIndex", 0)),
+            bot_bidding_policy=policy,
+            bot_k_policy=KPolicyConfig(mode=str(payload.get("botKPolicyMode", "regular"))),
+            bot_think_timeout_seconds=float(payload.get("botThinkTimeSeconds", 30.0)),
+            game_id=str(payload["gameId"]) if payload.get("gameId") else None,
+            seat_tokens={
+                int(key): str(value)
+                for key, value in (payload.get("seatTokens") or {}).items()
+            },
+            seat_names={
+                int(key): str(value)
+                for key, value in (payload.get("seatNames") or {}).items()
+            },
+            rematch_ready_seats={
+                int(value) for value in (payload.get("rematchReadySeats") or [])
+            },
+            chat_messages=deque(
+                payload.get("chatMessages") or [], maxlen=MAX_CHAT_HISTORY
+            ),
+        )
+        state_storage = payload.get("stateStorage")
+        if room.game_id and isinstance(state_storage, dict):
+            state = game_state_from_storage_dict(state_storage)
+            state.room_code = room.code
+            game_manager.restore_game(state)
+        return room
+
+    def _room_storage_payload(self, room: Room) -> dict[str, object]:
+        return {
+            "roomCode": room.code,
+            "createdAt": room.created_at,
+            "updatedAt": room.updated_at,
+            "startingBidderIndex": room.starting_bidder_index,
+            "gameId": room.game_id,
+            "seatTokens": {str(key): value for key, value in room.seat_tokens.items()},
+            "seatNames": {str(key): value for key, value in room.seat_names.items()},
+            "rematchReadySeats": sorted(room.rematch_ready_seats),
+            "chatMessages": list(room.chat_messages),
+            "botBiddingPolicy": room.bot_bidding_policy.to_public_dict(),
+            "botKPolicyMode": room.bot_k_policy.mode,
+            "botThinkTimeSeconds": room.bot_think_timeout_seconds,
+        }
+
+    def _persist_session_locked(self, room: Room) -> None:
+        try:
+            replay_store.save_session(self._room_storage_payload(room))
+        except Exception:
+            logger.exception("Unable to persist room session %s", room.code)
 
     def _find_seat_for_token_locked(self, room: Room, player_token: str) -> int | None:
         for seat_index, token in room.seat_tokens.items():
@@ -148,6 +232,7 @@ class RoomManager:
             "Skynet",
             room.seat_names.get(3, "Player 2"),
         ]
+        state.room_code = room.code
         room.game_id = state.game_id
         room.rematch_ready_seats.clear()
 
@@ -166,6 +251,7 @@ class RoomManager:
             room = Room(
                 code=code,
                 created_at=time.time(),
+                updated_at=time.time(),
                 starting_bidder_index=(
                     secrets.randbelow(4)
                     if starting_bidder_index is None
@@ -183,6 +269,7 @@ class RoomManager:
             room.seat_tokens[seat_index] = player_token
             room.seat_names[seat_index] = normalized_name
             self._rooms[code] = room
+            self._persist_session_locked(room)
             return RoomAssignment(
                 room_code=room.code,
                 seat_index=seat_index,
@@ -213,6 +300,21 @@ class RoomManager:
 
             if seat_index is None:
                 normalized_name = self._normalize_player_name(player_name)
+                # A room code plus the original display name can recover a seat
+                # on a new browser after both human seats have already been
+                # allocated. The stronger token path remains preferred.
+                if room.players_joined >= len(HUMAN_ROOM_SEATS):
+                    matching_seats = [
+                        existing_seat
+                        for existing_seat, existing_name in room.seat_names.items()
+                        if existing_name.casefold() == normalized_name.casefold()
+                    ]
+                    if len(matching_seats) == 1:
+                        seat_index = matching_seats[0]
+                        token = room.seat_tokens[seat_index]
+
+            if seat_index is None:
+                normalized_name = self._normalize_player_name(player_name)
                 for candidate in HUMAN_ROOM_SEATS:
                     if candidate not in room.seat_tokens:
                         seat_index = candidate
@@ -225,6 +327,8 @@ class RoomManager:
                 raise RoomFullError("Room is full.")
 
             self._ensure_game_created_locked(room)
+            room.updated_at = time.time()
+            self._persist_session_locked(room)
 
             return RoomAssignment(
                 room_code=room.code,
@@ -311,6 +415,8 @@ class RoomManager:
                 "sentAtEpochMs": int(now * 1000),
             }
             room.chat_messages.append(message)
+            room.updated_at = now
+            self._persist_session_locked(room)
             return dict(message)
 
     def validate_player(self, *, room_code: str, player_token: str) -> tuple[Room, int]:
@@ -320,6 +426,8 @@ class RoomManager:
             seat_index = self._find_seat_for_token_locked(room, player_token.strip())
             if seat_index is None:
                 raise RoomTokenError("Invalid room token.")
+            room.updated_at = time.time()
+            self._persist_session_locked(room)
             return room, seat_index
 
     def request_rematch(
@@ -347,10 +455,12 @@ class RoomManager:
                 raise RoomError("Rematch is available only after game over.")
 
             room.rematch_ready_seats.add(seat_index)
+            room.updated_at = time.time()
             ready = tuple(sorted(room.rematch_ready_seats))
 
             all_ready = all(seat in room.rematch_ready_seats for seat in HUMAN_ROOM_SEATS)
             if not all_ready:
+                self._persist_session_locked(room)
                 waiting_for = next(
                     seat for seat in HUMAN_ROOM_SEATS if seat not in room.rematch_ready_seats
                 )
@@ -367,12 +477,25 @@ class RoomManager:
             )
             room.starting_bidder_index = next_starting_bidder
             room.rematch_ready_seats.clear()
+            self._persist_session_locked(room)
 
             return RematchRequestResult(
                 started=True,
                 waiting_for_seat=None,
                 ready_seats=(),
                 starting_bidder_index=next_starting_bidder,
+            )
+
+    def persist_state(self, *, room_code: str, state) -> None:
+        with self._lock:
+            room = self._lookup_room_locked(room_code)
+            if room.game_id != state.game_id:
+                raise RoomError("Room game changed while persisting replay.")
+            room.updated_at = time.time()
+            replay_store.save(
+                session=self._room_storage_payload(room),
+                replay=build_replay_payload(state, room_code=room.code),
+                state_storage=game_state_to_storage_dict(state),
             )
 
 

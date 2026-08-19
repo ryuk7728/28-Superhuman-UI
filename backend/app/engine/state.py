@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Literal, Any, Final
+import time
 
 from app.bots.bid_policy import BidPolicyConfig
 from app.engine.k_policy import KPolicyConfig
@@ -130,6 +131,26 @@ class GameState:
 
     event_log: list[str] = field(default_factory=list)
 
+    # Durable replay metadata. A multiplayer room keeps the same game_id across
+    # rematches, while deal_number identifies each independently replayable deal.
+    room_code: str | None = None
+    deal_number: int = 1
+    deal_started_at_epoch_ms: int = field(
+        default_factory=lambda: int(time.time() * 1000)
+    )
+    deal_completed_at_epoch_ms: int | None = None
+    initial_first4_card_ids: list[list[str]] = field(
+        default_factory=lambda: [[], [], [], []]
+    )
+    initial_full_hand_card_ids: list[list[str]] = field(
+        default_factory=lambda: [[], [], [], []]
+    )
+    bid_history: list[dict[str, Any]] = field(default_factory=list)
+    trump_selection_history: list[dict[str, Any]] = field(default_factory=list)
+    reveal_history: list[dict[str, Any]] = field(default_factory=list)
+    play_history: list[dict[str, Any]] = field(default_factory=list)
+    replay_revision: int = 0
+
     # Immutable per-game empirical bidding experiment selected by the host.
     bot_bidding_policy: BidPolicyConfig = field(default_factory=BidPolicyConfig.aggressive)
     # Immutable per-game rollout search breadth selected by the host.
@@ -257,6 +278,8 @@ class GameState:
                 "completedCatches": completed_catches,
             },
             "eventLog": self.event_log,
+            "roomCode": self.room_code,
+            "dealNumber": self.deal_number,
             "selfPlay": {
                 "enabled": self.self_play,
                 "resultLogged": self.self_play_result_logged,

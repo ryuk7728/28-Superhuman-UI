@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import copy
+import time
 from dataclasses import dataclass
 
 from app.engine.cards_adapter import from_card_id, to_card_id
 from app.engine.state import SUIT_MATRIX_INDEX
+from app.engine.replay_tracking import all_effective_hands, card_play_context, mark_deal_completed
 from app.legacy.cards import Cards
 from app.legacy import minimax as legacy_minimax
 
@@ -82,6 +84,36 @@ def _infer_bidder_non_trump_lead(
         state.trump_matrix[row][seat_index] = 0
         state.event_log.append(
             f"Inferred: P{seat_index+1}'s concealed trump is not {played_suit}."
+        )
+
+
+def _infer_revealer_void_in_trump(
+    state,
+    *,
+    seat_index: int,
+    revealed_trump_this_turn: bool,
+    trump_suit: str | None,
+    played_suit: str,
+) -> None:
+    """
+    Permanent inference:
+    if this player revealed trump and then did not play that suit, they had no
+    trump card available. This applies only to the player who caused the reveal,
+    not to later players acting after trump is already public.
+    """
+    if not revealed_trump_this_turn or not trump_suit:
+        return
+    if played_suit == trump_suit:
+        return
+
+    row = SUIT_MATRIX_INDEX.get(trump_suit)
+    if row is None:
+        return
+
+    if state.suit_matrix[row][seat_index] != 0:
+        state.suit_matrix[row][seat_index] = 0
+        state.event_log.append(
+            f"Inferred: P{seat_index+1} is void in revealed trump suit {trump_suit}."
         )
 
 
@@ -207,6 +239,25 @@ def apply_reveal_choice(state, seat_index: int, reveal: bool) -> None:
     if seat_index != actor:
         raise ValueError("Not your turn.")
 
+    legal = compute_play_legal_actions(state)
+    if legal.type != "REVEAL_CHOICE" or reveal not in legal.options:
+        raise ValueError("Illegal trump reveal choice.")
+    state.reveal_history.append(
+        {
+            "sequence": len(state.reveal_history) + 1,
+            "catchNumber": state.catchNumber,
+            "playNumberInCatch": len(state.s) + 1,
+            "seatIndex": seat_index,
+            "options": list(legal.options),
+            "selectedReveal": bool(reveal),
+            "allHandsBeforeCardIds": all_effective_hands(state),
+            "trickBeforeCardIds": [to_card_id(card) for card in state.s],
+            "trumpSuit": state.trumpSuit,
+            "atEpochMs": int(time.time() * 1000),
+        }
+    )
+    state.replay_revision += 1
+
     (
         state.currentSuit,
         state.s,
@@ -268,8 +319,15 @@ def apply_play_card(state, seat_index: int, card_id: str) -> None:
     if card_id not in legal.cardIds:
         raise ValueError("Illegal card.")
 
+    replay_action = card_play_context(
+        state, seat_index=seat_index, legal_card_ids=legal.cardIds
+    )
+    replay_action["selectedCardId"] = card_id
+
     pre_trick_len = len(state.s)
     led_suit = state.currentSuit
+    revealed_trump_this_turn = bool(state.chose and state.trumpReveal)
+    revealed_trump_suit = state.trumpSuit if revealed_trump_this_turn else None
 
     card_obj = _find_card_object_for_play(state, seat_index, card_id)
 
@@ -300,11 +358,26 @@ def apply_play_card(state, seat_index: int, card_id: str) -> None:
         state.leaderIndex,
     )
 
+    replay_action["wasTrump"] = bool(
+        pre_trick_len < len(state.trumpIndice)
+        and state.trumpIndice[pre_trick_len] == 1
+    )
+    replay_action["trumpWasRevealedAfterPlay"] = bool(state.trumpReveal)
+    state.play_history.append(replay_action)
+    state.replay_revision += 1
+
     _infer_void_if_failed_follow(
         state,
         seat_index=seat_index,
         pre_trick_len=pre_trick_len,
         led_suit=led_suit,
+        played_suit=card_obj.suit,
+    )
+    _infer_revealer_void_in_trump(
+        state,
+        seat_index=seat_index,
+        revealed_trump_this_turn=revealed_trump_this_turn,
+        trump_suit=revealed_trump_suit,
         played_suit=card_obj.suit,
     )
     _infer_bidder_non_trump_lead(
@@ -401,5 +474,6 @@ def resolve_if_catch_complete(state) -> None:
                 f"GAME OVER: Team {other_team} wins "
                 f"({bidding_points} < {state.finalBidValue})."
             )
+        mark_deal_completed(state)
 
         state.phase = "GAME_OVER"

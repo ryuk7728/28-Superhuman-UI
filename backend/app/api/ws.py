@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections import defaultdict
 from typing import Awaitable, Callable
 
@@ -18,6 +19,7 @@ from app.engine.bidding_engine import (
 from app.engine.cards_adapter import from_card_id, to_card_id
 from app.engine.game_manager import game_manager
 from app.engine.legal_actions import get_legal_actions
+from app.engine.replay_tracking import capture_full_hands, record_bid, record_trump_selection
 from app.engine.room_manager import (
     RoomError,
     RoomNotFoundError,
@@ -34,6 +36,7 @@ from app.engine.bot_runner import advance_bots_until_human
 from app.engine.self_play_results import append_self_play_result
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 BOT_SEATS = {0, 2}
 
@@ -47,6 +50,22 @@ _ROOM_CHAT_CONNECTIONS: dict[str, list[WebSocket]] = defaultdict(list)
 _ROOM_VOICE_CONNECTIONS: dict[str, dict[int, WebSocket]] = defaultdict(dict)
 _ROOM_VOICE_ACTIVE: dict[str, set[int]] = defaultdict(set)
 _ROOM_REGISTRY_LOCK = asyncio.Lock()
+_ROOM_PERSIST_LOCKS: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+
+async def _persist_room_state(room_code: str, state) -> None:
+    key = room_code.upper()
+    async with _ROOM_PERSIST_LOCKS[key]:
+        try:
+            await asyncio.to_thread(
+                room_manager.persist_state, room_code=key, state=state
+            )
+        except Exception:
+            # Gameplay remains available if the archive temporarily fails, while
+            # Cloud Logging retains the failure for repair.
+            logger.exception("Unable to persist live replay for room %s", key)
+
+
 async def _register_room_connection(
     room_code: str, websocket: WebSocket, viewer_seat: int | None, can_act: bool
 ) -> None:
@@ -387,6 +406,18 @@ def _apply_r1_bid(state, *, seat: int, bid_value: int) -> None:
 
     validate_r1_bid_value(rules=rules, bid_value=bid_value)
 
+    record_bid(
+        state,
+        round_number=1,
+        seat_index=seat,
+        bid_value=bid_value,
+        bid_position=state.bidding_r1_step + 1,
+        min_bid_exclusive=rules.min_bid_exclusive,
+        max_bid_inclusive=rules.max_bid_inclusive,
+        can_pass=rules.can_pass,
+        can_redeal=rules.can_redeal,
+    )
+
     pos = state.bidding_r1_step
     state.bidding_r1_bids_by_pos[pos] = bid_value
     state.bids_r1_by_seat[seat] = bid_value
@@ -427,6 +458,17 @@ def _apply_r2_bid(state, *, seat: int, bid_value: int) -> None:
     )
 
     validate_r2_bid_value(rules=rules, bid_value=bid_value)
+
+    record_bid(
+        state,
+        round_number=2,
+        seat_index=seat,
+        bid_value=bid_value,
+        bid_position=state.bidding_r2_step + 1,
+        min_bid_exclusive=rules.min_bid_exclusive,
+        max_bid_inclusive=rules.max_bid_inclusive,
+        can_pass=True,
+    )
 
     pos = state.bidding_r2_step
     state.bidding_r2_bids_by_pos[pos] = bid_value
@@ -469,6 +511,13 @@ def _apply_select_trump_card(state, *, seat: int, card_id: str) -> None:
         raise ValueError("final_bidder_seat not set.")
     if seat != state.final_bidder_seat:
         raise ValueError("Not your trump selection turn.")
+
+    record_trump_selection(
+        state,
+        seat_index=seat,
+        card_id=card_id,
+        round_number=1 if state.phase == "TRUMP_SELECT_R1" else 2,
+    )
 
     chosen = from_card_id(card_id)
     hand = state.players_cards[seat]
@@ -658,12 +707,16 @@ async def _run_ws_session(
     bot_sem = app.state.bot_sem
 
     async def send_state_current() -> None:
+        if room_code is not None:
+            await _persist_room_state(room_code, state)
         if broadcast_state is not None:
             await broadcast_state(state)
             return
         await _send_state_for_viewer(websocket, state, viewer_seat, can_act)
 
     async def send_state_fn(ws: WebSocket, current_state) -> None:
+        if room_code is not None:
+            await _persist_room_state(room_code, current_state)
         if broadcast_state is not None:
             await broadcast_state(current_state)
             return
@@ -873,6 +926,7 @@ async def _run_ws_session(
                             state.players_cards[seat].append(from_card_id(cid))
 
                     state.draw_pile.clear()
+                    capture_full_hands(state)
 
                     reason = _abort_reason_after_full_deal(state)
                     if reason:

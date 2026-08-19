@@ -10,6 +10,7 @@ from app.engine.canonical_key import build_canonical_key_and_mapping
 from app.engine.fixed_deck import load_fixed_deck_cards
 from app.engine.k_policy import KPolicyConfig
 from app.engine.play_engine import init_play_state
+from app.engine.replay_tracking import capture_full_hands, initialize_deal_replay
 from app.engine.state import GameState
 from app.engine.validator import validate_first4_hands
 from app.settings import settings
@@ -82,6 +83,8 @@ class GameManager:
             ],
         )
 
+        initialize_deal_replay(state)
+
         self._games[game_id] = state
         return state
 
@@ -108,6 +111,7 @@ class GameManager:
             if not state.fixed_deck_mode
             else "Auto-deal: remaining 16 cards distributed from fixed deck."
         )
+        capture_full_hands(state)
 
     def create_game_manual_first4(
         self,
@@ -149,6 +153,8 @@ class GameManager:
                 f"Starting bidder: P{starting_bidder_index + 1}",
             ],
         )
+
+        initialize_deal_replay(state)
 
         self._games[game_id] = state
         return state
@@ -295,7 +301,12 @@ class GameManager:
     def delete_game(self, game_id: str) -> None:
         self._games.pop(game_id, None)
 
-    def redeal_first4_in_place(self, state: GameState) -> None:
+    def restore_game(self, state: GameState) -> None:
+        self._games[state.game_id] = state
+
+    def redeal_first4_in_place(
+        self, state: GameState, *, increment_deal: bool = False
+    ) -> None:
         """
         In-place redeal (same gameId):
           - shuffle a fresh 32-card deck
@@ -363,6 +374,8 @@ class GameManager:
         state.play_players = []
         state.winnerTeam = None
 
+        initialize_deal_replay(state, increment_deal=increment_deal)
+
         state.event_log.append(
             "Redeal performed (first-4 re-dealt)."
             if not state.fixed_deck_mode
@@ -382,7 +395,7 @@ class GameManager:
         state.starting_bidder_index = starting_bidder_index
         state.bidding_order = [(starting_bidder_index + i) % 4 for i in range(4)]
 
-        self.redeal_first4_in_place(state)
+        self.redeal_first4_in_place(state, increment_deal=True)
 
         # Fresh rematch should also reset suit-knowledge and game log context.
         state.suit_matrix = [[1, 1, 1, 1] for _ in range(4)]

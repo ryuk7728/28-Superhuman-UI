@@ -912,6 +912,11 @@ export const GamePage: React.FC<GamePageProps> = ({
         newGameDisabled={isRoomRematchFlow && localSeatReady}
         newGameLabel={isRoomRematchFlow && localSeatReady ? "Waiting..." : "New Game"}
         statusMessage={rematchStatusMessage}
+        replayUrl={
+          roomCode
+            ? `${String(import.meta.env.VITE_REPLAY_BASE_URL || "http://localhost:5174").replace(/\/$/, "")}/?room=${encodeURIComponent(roomCode)}&deal=${gameState.dealNumber || 1}`
+            : null
+        }
       />
     );
   };

@@ -22,6 +22,7 @@ export interface GameOverModalProps {
   newGameDisabled?: boolean;
   newGameLabel?: string;
   statusMessage?: string | null;
+  replayUrl?: string | null;
 }
 
 export const GameOverModal: React.FC<GameOverModalProps> = ({
@@ -36,6 +37,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
   newGameDisabled = false,
   newGameLabel = "New Game",
   statusMessage = null,
+  replayUrl = null,
 }) => {
   const bidderWon =
     (biddingTeam === "humans" && humanPoints >= bidValue) ||
@@ -64,9 +66,16 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
 
         {statusMessage ? <div className="rematch-status">{statusMessage}</div> : null}
 
-        <button className="new-game-btn" onClick={onNewGame} disabled={newGameDisabled}>
-          {newGameLabel}
-        </button>
+        <div className="game-over-actions">
+          {replayUrl ? (
+            <a className="replay-game-btn" href={replayUrl} target="_blank" rel="noreferrer">
+              View full replay
+            </a>
+          ) : null}
+          <button className="new-game-btn" onClick={onNewGame} disabled={newGameDisabled}>
+            {newGameLabel}
+          </button>
+        </div>
       </div>
     </div>
   );
